@@ -1,0 +1,11 @@
+{
+  "name": "ai-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI 浏览器助手 - 根目录工作区",
+  "scripts": {
+    "start": "npm start --prefix server",
+    "dev": "npm run dev --prefix server",
+    "server:install": "npm install --prefix server"
+  }
+}

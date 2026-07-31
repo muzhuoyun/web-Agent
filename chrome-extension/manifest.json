@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "AI 浏览器助手",
+  "version": "0.2.0",
+  "description": "AI 浏览器助手 — 可扩展的浏览器 AI Agent 平台",
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
+  },
+
+  "permissions": [
+    "storage",
+    "alarms",
+    "activeTab",
+    "scripting",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://localhost:3457/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content-script/main.js",
+        "plugins/adult-guard/content.js",
+        "plugins/noun-explainer/content.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Period",
+        "mac": "Command+Shift+Period"
+      }
+    }
+  }
+}

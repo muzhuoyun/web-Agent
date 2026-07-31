@@ -1,0 +1,18 @@
+{
+  "id": "noun-explainer",
+  "name": "名词解释",
+  "version": "1.0.0",
+  "icon": "🤖",
+  "description": "在页面上下文中解释选中的名词术语",
+  "triggers": ["alt-select", "alt-h", "alt-c"],
+  "triggerLabels": {
+    "alt-select": "Alt+选中",
+    "alt-h": "Alt+H 隐藏",
+    "alt-c": "Alt+C 全部关闭"
+  },
+  "systemPrompt": "你是一个知识渊博的AI助手，擅长结合上下文语境解释概念、术语和名词。\n\n用户选中了一段文字，你在当前页面的语境下解释它。\n\n要求：\n1. 理解选中内容在当前页面上下文中的具体含义\n2. 关注选中内容与前后文的关联，尤其是后文\n3. 给出清晰、简洁、有深度的解释\n4. 用中文回答\n5. 第一句给出核心定义，然后展开2-4句\n6. 适当使用 **加粗** 标记重点",
+  "configSchema": {
+    "systemPrompt": { "type": "textarea", "label": "系统提示词" },
+    "temperature": { "type": "number", "label": "温度", "default": 0.7 }
+  }
+}

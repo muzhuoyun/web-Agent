@@ -1,0 +1,29 @@
+{
+  "id": "adult-guard",
+  "name": "色情内容屏蔽",
+  "version": "1.0.0",
+  "icon": "🛡️",
+  "description": "检测网页中的色情内容并自动屏蔽",
+  "triggers": [
+    "page-load"
+  ],
+  "systemPrompt": "你是一个内容审核助手。判断以下文字是否包含色情内容，只回答 true 或 false。",
+  "configSchema": {
+    "systemPrompt": {
+      "type": "textarea",
+      "label": "审核提示词"
+    },
+    "sensitivity": {
+      "type": "select",
+      "label": "敏感度",
+      "options": [
+        "低",
+        "中",
+        "高"
+      ],
+      "default": "中"
+    }
+  },
+  "valid": true,
+  "errors": []
+}

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 浏览器助手</title>
+  <style>
+    :root {
+      --bg: #ffffff; --text: #1f2937; --border: #e5e7eb;
+      --primary: #3b82f6; --surface: #f8fafc; --muted: #6b7280;
+      --danger: #ef4444; --success: #10b981;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1f2937; --text: #e5e7eb; --border: #374151;
+        --primary: #60a5fa; --surface: #111827; --muted: #9ca3af;
+        --danger: #f87171; --success: #34d399;
+      }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 420px; max-height: 560px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text); font-size: 13px;
+      overflow: hidden;
+    }
+    .page { display: none; padding: 14px; max-height: 560px; overflow-y: auto; }
+    .page.active { display: block; }
+    .back {
+      cursor: pointer; color: var(--primary); font-size: 12px;
+      margin-bottom: 10px; display: inline-flex; align-items: center; gap: 3px;
+    }
+    .back:hover { text-decoration: underline; }
+    h1 { font-size: 16px; display: flex; align-items: center; gap: 6px; }
+    .subtitle { font-size: 11px; color: var(--muted); margin-bottom: 12px; }
+
+    /* ─── 插件列表 ─── */
+    .plugin-list { display: flex; flex-direction: column; gap: 6px; }
+    .plugin-card {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); cursor: pointer; transition: border-color 0.15s;
+    }
+    .plugin-card:hover { border-color: var(--primary); }
+    .plugin-icon { font-size: 20px; flex-shrink: 0; }
+    .plugin-info { flex: 1; min-width: 0; }
+    .plugin-name { font-weight: 600; font-size: 13px; }
+    .plugin-desc { font-size: 11px; color: var(--muted); }
+
+    .toggle {
+      width: 32px; height: 18px; border-radius: 9px; border: none;
+      cursor: pointer; transition: background 0.15s; position: relative;
+      background: #d1d5db; flex-shrink: 0;
+    }
+    .toggle.on { background: var(--primary); }
+    .toggle::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 14px; height: 14px; border-radius: 50%; background: white;
+      transition: transform 0.15s;
+    }
+    .toggle.on::after { transform: translateX(14px); }
+
+    .menu-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      cursor: pointer; transition: border-color 0.15s; margin-top: 6px;
+    }
+    .menu-item:hover { border-color: var(--primary); }
+    .add-card {
+      border-style: dashed; justify-content: center; color: var(--muted);
+    }
+    .add-card:hover { color: var(--primary); }
+
+    /* ─── 表单 ─── */
+    .form-group { margin-bottom: 10px; }
+    label { display: block; font-size: 11px; font-weight: 500; color: var(--muted); margin-bottom: 3px; }
+    input, textarea, select {
+      width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface); color: var(--text); font-size: 12px;
+      font-family: inherit; outline: none;
+    }
+    input:focus, textarea:focus { border-color: var(--primary); }
+    textarea { resize: vertical; min-height: 50px; }
+    textarea.code { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 11px; min-height: 120px; }
+    .btn {
+      padding: 7px 14px; border: none; border-radius: 6px;
+      font-size: 12px; font-weight: 500; cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status { font-size: 11px; padding: 6px; border-radius: 4px; display: none; margin-top: 6px; }
+    .status.show { display: block; }
+    .status.success { background: rgba(16,185,129,0.1); color: var(--success); }
+    .status.error { background: rgba(239,68,68,0.1); color: var(--danger); }
+
+    .server-status {
+      display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted);
+      margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
+    }
+    .server-dot { width: 6px; height: 6px; border-radius: 50%; background: #9ca3af; }
+    .server-dot.online { background: var(--success); }
+    .server-dot.offline { background: var(--danger); }
+  </style>
+</head>
+<body>
+  <!-- ═══ 首页：插件列表 ═══ -->
+  <div class="page active" id="page-home">
+    <h1>🤖 AI 浏览器助手</h1>
+    <div class="subtitle">插件商店 — 管理你的 AI 插件</div>
+    <div class="plugin-list" id="pluginList"></div>
+    <div class="menu-item add-card" id="gotoAdd">
+      <span style="font-size:16px">+</span> 添加新插件
+    </div>
+    <div class="menu-item" id="gotoSettings">
+      ⚙️ 设置（API Key / 模型）
+    </div>
+    <div class="server-status" id="serverStatus">
+      <span class="server-dot" id="serverDot"></span>
+      <span id="serverText">检查服务器状态...</span>
+    </div>
+  </div>
+
+  <!-- ═══ 插件详情 ═══ -->
+  <div class="page" id="page-detail">
+    <a class="back" id="detailBack">← 返回列表</a>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <span style="font-size:24px" id="detailIcon">🤖</span>
+      <div>
+        <div style="font-weight:600;font-size:14px" id="detailTitle">名称</div>
+        <div style="font-size:11px;color:var(--muted)" id="detailMeta">ID: -</div>
+      </div>
+    </div>
+    <div id="detailError" style="display:none;padding:8px 12px;margin-bottom:10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:6px;color:var(--danger);font-size:12px;white-space:pre-wrap"></div>
+    <div class="form-group">
+      <label>插件名称</label>
+      <input type="text" id="cfgName" />
+    </div>
+    <div class="form-group">
+      <label>描述</label>
+      <input type="text" id="cfgDesc" />
+    </div>
+    <div id="cfgDynamicFields"></div>
+    <div id="detailStatus" class="status"></div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="cfgSaveBtn">保存</button>
+      <button class="btn btn-secondary" id="cfgEditBtn">✏️ 编辑插件</button>
+    </div>
+  </div>
+
+  <!-- ═══ 设置页 ═══ -->
+  <div class="page" id="page-settings">
+    <a class="back" id="settingsBack">← 返回列表</a>
+    <h1 style="font-size:15px;margin-bottom:8px">⚙️ 设置</h1>
+    <div class="form-group">
+      <label>API 端点</label>
+      <input type="text" id="apiEndpoint" placeholder="https://api.openai.com/v1" />
+    </div>
+    <div class="form-group">
+      <label>API Key</label>
+      <input type="password" id="apiKey" placeholder="sk-..." />
+    </div>
+    <div class="form-group">
+      <label>模型</label>
+      <select id="model">
+        <option value="gpt-4o-mini">GPT-4o-mini（推荐）</option>
+        <option value="gpt-4o">GPT-4o</option>
+        <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+        <option value="deepseek-chat">DeepSeek V4 Flash</option>
+        <option value="qwen-plus">Qwen Plus</option>
+        <option value="custom">自定义</option>
+      </select>
+    </div>
+    <div class="form-group" id="customModelGroup" style="display:none">
+      <label>自定义模型名</label>
+      <input type="text" id="customModel" placeholder="输入模型名称" />
+    </div>
+    <div id="settingsStatus" class="status"></div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="saveBtn">保存设置</button>
+      <button class="btn btn-secondary" id="testBtn">测试连接</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
