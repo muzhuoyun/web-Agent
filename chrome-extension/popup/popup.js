@@ -3,6 +3,8 @@
 // ─────────────────────────────────────────────
 
 let plugins = []
+let cfgEditor = null        // 插件详情页的 JSONEditor 实例
+let jsonEditorPromise = null
 
 // ─── DOM ───
 const $ = id => document.getElementById(id)
@@ -118,6 +120,25 @@ function renderPlugins() {
 //  插件详情
 // ─────────────────────────────────────────────
 
+// 懒加载 JSONEditor + FontAwesome 图标样式（只在打开详情页时加载，保持弹窗启动速度）
+function loadJSONEditor() {
+  if (window.JSONEditor) return Promise.resolve()
+  if (!jsonEditorPromise) {
+    jsonEditorPromise = new Promise((resolve, reject) => {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.href = chrome.runtime.getURL('vendor/fontawesome/css/all.min.css')
+      document.head.appendChild(link)
+      const s = document.createElement('script')
+      s.src = chrome.runtime.getURL('vendor/jsoneditor/jsoneditor.js')
+      s.onload = () => resolve()
+      s.onerror = () => reject(new Error('JSONEditor 加载失败'))
+      document.head.appendChild(s)
+    })
+  }
+  return jsonEditorPromise
+}
+
 function showDetail(id) {
   const p = plugins.find(x => x.id === id)
   if (!p) return
@@ -143,58 +164,58 @@ function showDetail(id) {
   $('cfgDesc').value = p.description || ''
   $('detailStatus').className = 'status'
 
-  // 动态渲染配置字段
-  const schema = p.configSchema || {}
-  const config = p.config || {}
-  const fields = { systemPrompt: { type: 'textarea', label: '系统提示词' }, ...schema }
-  const container = $('cfgDynamicFields')
-  container.innerHTML = ''
-  const fieldIds = {}
+  // 懒加载 JSONEditor，渲染配置表单（基于 configSchema）
+  loadJSONEditor().then(async () => {
+    // 用 GET_PLUGIN_META 的合并配置预填（含存储覆盖值），失败时退回列表数据
+    let config = p.config || {}
+    try {
+      const res = await chrome.runtime.sendMessage({ type: 'GET_PLUGIN_META', pluginId: id })
+      if (res?.meta) config = res.meta.config || {}
+    } catch (_) {}
 
-  for (const [key, spec] of Object.entries(fields)) {
-    const id = 'cfg_' + key
-    fieldIds[key] = id
-    const val = p[key] !== undefined ? p[key] : (config[key] !== undefined ? config[key] : spec.default || '')
-
-    const group = document.createElement('div')
-    group.className = 'form-group'
-    group.innerHTML = `<label>${spec.label || key}</label>`
-
-    if (spec.type === 'textarea') {
-      const ta = document.createElement('textarea')
-      ta.id = id; ta.rows = 3; ta.value = val
-      group.appendChild(ta)
-    } else if (spec.type === 'select' && spec.options) {
-      const sel = document.createElement('select'); sel.id = id
-      spec.options.forEach(opt => {
-        const o = document.createElement('option'); o.value = opt; o.textContent = opt
-        if (opt === val) o.selected = true
-        sel.appendChild(o)
-      })
-      group.appendChild(sel)
-    } else {
-      const input = document.createElement('input')
-      input.id = id; input.type = spec.type || 'text'
-      if (spec.min !== undefined) input.min = spec.min
-      if (spec.max !== undefined) input.max = spec.max
-      if (spec.step !== undefined) input.step = spec.step
-      input.value = val
-      group.appendChild(input)
+    const schema = p.configSchema || { type: 'object', properties: {} }
+    // 只传配置中实际存在的属性，缺失键由 JSONEditor 用 schema default 填充
+    const startval = {}
+    for (const key of Object.keys(schema.properties || {})) {
+      if (config[key] !== undefined) startval[key] = config[key]
     }
-    container.appendChild(group)
-  }
+
+    if (cfgEditor) { try { cfgEditor.destroy() } catch (_) {} }
+    const container = $('cfgDynamicFields')
+    container.innerHTML = ''
+    cfgEditor = new JSONEditor(container, {
+      schema,
+      startval,
+      theme: 'html',
+      iconlib: 'fontawesome5',
+      disable_edit_json: true,
+      disable_collapse: true,
+      disable_properties: true,
+      disable_array_delete_all_rows: true,
+      disable_array_delete_last_row: true
+    })
+  }).catch(e => {
+    $('cfgDynamicFields').innerHTML =
+      `<div style="padding:8px 12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:6px;color:var(--danger);font-size:12px">配置编辑器加载失败: ${esc(e.message)}</div>`
+  })
 
   $('cfgSaveBtn').onclick = async () => {
-    const updates = { id, name: $('cfgName').value.trim(), description: $('cfgDesc').value.trim() }
-    for (const key of Object.keys(fields)) {
-      const el = document.getElementById(fieldIds[key])
-      if (el) updates[key] = el.value
+    if (!cfgEditor) return showDetailStatus('配置编辑器尚未加载', 'error')
+    if (!cfgEditor.ready) await new Promise(r => cfgEditor.on('ready', r)) // 初始化是异步的，等 ready
+    const errs = cfgEditor.validate()
+    if (errs && errs.length) {
+      return showDetailStatus('配置无效: ' + errs.map(e => e.message).join('; '), 'error')
     }
+    const btn = $('cfgSaveBtn')
+    btn.disabled = true
     try {
+      const updates = { id, name: $('cfgName').value.trim(), description: $('cfgDesc').value.trim(), ...cfgEditor.getValue() }
       await chrome.runtime.sendMessage({ type: 'UPDATE_PLUGIN_META', plugin: updates })
       showDetailStatus('✅ 已保存', 'success')
     } catch (e) {
       showDetailStatus('保存失败', 'error')
+    } finally {
+      btn.disabled = false
     }
   }
 

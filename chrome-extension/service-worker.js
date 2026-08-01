@@ -141,11 +141,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const state = getRuntimeState(msg.pluginId)
         const stored = await chrome.storage.local.get(`plugin_cfg_${msg.pluginId}`)
         const overrides = stored[`plugin_cfg_${msg.pluginId}`] || {}
-        // 从 configSchema.default 构建默认配置
+        // 从 configSchema.properties 构建默认配置
         const defaults = {}
-        if (meta?.configSchema) {
-          for (const [key, spec] of Object.entries(meta.configSchema)) {
-            if (spec.default !== undefined) defaults[key] = spec.default
+        if (meta?.configSchema?.properties) {
+          for (const [key, spec] of Object.entries(meta.configSchema.properties)) {
+            if (spec && typeof spec === 'object' && spec.default !== undefined) defaults[key] = spec.default
           }
         }
         sendResponse({

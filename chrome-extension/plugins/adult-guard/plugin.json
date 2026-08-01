@@ -9,21 +9,41 @@
   ],
   "systemPrompt": "你是一个内容审核助手。判断以下文字是否包含色情内容，只回答 true 或 false。",
   "configSchema": {
-    "systemPrompt": {
-      "type": "textarea",
-      "label": "审核提示词"
-    },
-    "sensitivity": {
-      "type": "select",
-      "label": "敏感度",
-      "options": [
-        "低",
-        "中",
-        "高"
-      ],
-      "default": "中"
+    "type": "object",
+    "title": "插件配置",
+    "properties": {
+      "systemPrompt": {
+        "type": "string",
+        "format": "textarea",
+        "title": "审核提示词"
+      },
+      "sensitivity": {
+        "type": "string",
+        "title": "敏感度",
+        "enum": [
+          "低",
+          "中",
+          "高"
+        ],
+        "default": "中"
+      },
+      "keywords": {
+        "type": "array",
+        "title": "追加关键词（可选）",
+        "items": {
+          "type": "string",
+          "title": "关键词"
+        },
+        "options": {
+          "disable_array_reorder": true
+        },
+        "default": [],
+        "description": "默认内置 400 个敏感词（中/英/日/韩，代码内固定），此处可追加自己的词。"
+      }
     }
   },
   "valid": true,
-  "errors": []
+  "errors": [],
+  "sensitivity": "高",
+  "keywords": []
 }

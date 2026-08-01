@@ -23,6 +23,7 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg); color: var(--text); font-size: 13px;
       overflow: hidden;
+      color-scheme: light dark; /* 原生控件（下拉/数字步进器/checkbox）跟随浏览器主题 */
     }
     .page { display: none; padding: 14px; max-height: 560px; overflow-y: auto; }
     .page.active { display: block; }
@@ -103,6 +104,73 @@
     .server-dot { width: 6px; height: 6px; border-radius: 50%; background: #9ca3af; }
     .server-dot.online { background: var(--success); }
     .server-dot.offline { background: var(--danger); }
+
+    /* ─── JSONEditor 表单适配（无框化：窄弹窗里不显示多余的框/边框）─── */
+    /* 根对象标题行（「插件配置」）：纯文本标题，无框 */
+    [data-schemapath="root"] > .je-header {
+      display: block;
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+    .je-object__container { margin-top: 4px; }
+    .je-form-input-label { color: var(--muted); font-size: 11px; font-weight: 500; }
+    .je-form-input-label .required { color: var(--danger); }
+    /* 数组/对象字段标题（渲染为 .je-header）：与 label 同款灰色小字（根标题有独立规则，不受影响） */
+    [data-schematype="array"] > .je-header {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+    /* 字段描述（jsoneditor 把 description 渲染为无类 <p>，仅在配置表单容器内）：与标题同款小字灰色 */
+    #cfgDynamicFields p {
+      color: var(--muted) !important;
+      font-size: 11px !important;
+      font-style: normal !important;
+      margin: 2px 0 4px;
+    }
+    /* 库默认 height:300px，弹窗里太高；用更高特异性覆盖（不用 !important，避免挡住拖拽伸缩） */
+    #cfgDynamicFields .je-textarea { height: auto; min-height: 60px; }
+    /* 面板去框：html 主题会给 .je-indented-panel 加四边 #ddd 边框（包住整个表单的白色框），全部去掉 */
+    .je-indented-panel {
+      border: none !important;
+      border-radius: 0 !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+    /* 关键词数组行：输入框 + ✕ 图标删除按钮同行，隐藏序号标题（关键词 1） */
+    [data-schematype="array"] .je-indented-panel .je-indented-panel {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    [data-schematype="array"] .je-indented-panel .je-indented-panel .form-control { flex: 1; margin: 0; }
+    /* 库主题规则 div[data-theme="html"] .je-form-input-label{display:block} 特异性更高，需 !important */
+    [data-schematype="array"] .je-form-input-label { display: none !important; }
+    [data-schematype="array"] .je-indented-panel .je-indented-panel .json-editor-btn-delete {
+      width: 28px; height: 28px; padding: 0; flex-shrink: 0;
+      border: none; background: transparent; border-radius: 0;
+      font-size: 14px; line-height: 1; color: var(--muted); cursor: pointer;
+    }
+    [data-schematype="array"] .je-indented-panel .je-indented-panel .json-editor-btn-delete span { display: none; }
+    [data-schematype="array"] .je-indented-panel .je-indented-panel .json-editor-btn-delete:hover { color: var(--danger); }
+    /* 增删行等操作按钮（库无默认样式） */
+    .json-editor-btn-add, .json-editor-btn-delete, .json-editor-btn-subtract,
+    .json-editor-btn-copy, .json-editor-btn-cancel, .json-editor-btn-save,
+    .json-editor-btn-collapse, .json-editor-btn-edit,
+    .json-editor-btn-movedown, .json-editor-btn-moveup {
+      padding: 3px 10px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface); color: var(--text); font-size: 12px; cursor: pointer;
+    }
+    .json-editor-btn-add:hover { border-color: var(--primary); color: var(--primary); }
+    .json-editor-btn-delete:hover, .json-editor-btn-subtract:hover {
+      border-color: var(--danger); color: var(--danger);
+    }
+    .je-errormsg { color: var(--danger) !important; font-size: 11px; }
   </style>
 </head>
 <body>

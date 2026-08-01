@@ -501,7 +501,7 @@ ${code}
     description: meta.description || '',
     triggers: meta.triggers || ['alt-select'],
     systemPrompt: meta.systemPrompt || (meta.config?.systemPrompt) || '',
-    configSchema: meta.configSchema || { systemPrompt: { type: 'textarea', label: '系统提示词' } },
+    configSchema: meta.configSchema || { type: 'object', properties: { systemPrompt: { type: 'string', format: 'textarea', title: '系统提示词' } } },
     valid: validation.valid,
     errors: validation.errors
   }

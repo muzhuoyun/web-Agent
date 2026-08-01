@@ -11,7 +11,7 @@ const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
 const metaEditor = CodeMirror.fromTextArea($('metaInput'), {
   theme: isDark ? 'material-darker' : 'default',
   lineNumbers: true, mode: 'application/json', indentUnit: 2, tabSize: 2, lineWrapping: true,
-  placeholder: '{\n  "id": "my-plugin",\n  "name": "我的插件",\n  "icon": "🔌",\n  "description": "插件描述",\n  "triggers": ["alt-select"],\n  "systemPrompt": "你是一个AI助手，...",\n  "configSchema": {\n    "systemPrompt": { "type": "textarea", "label": "提示词" },\n    "temperature": { "type": "number", "label": "温度", "default": 0.7 }\n  }\n}'
+  placeholder: '{\n  "id": "my-plugin",\n  "name": "我的插件",\n  "icon": "🔌",\n  "description": "插件描述",\n  "triggers": ["alt-select"],\n  "systemPrompt": "你是一个AI助手，...",\n  "configSchema": {\n    "type": "object",\n    "properties": {\n      "systemPrompt": { "type": "string", "format": "textarea", "title": "提示词" },\n      "temperature": { "type": "number", "title": "温度", "default": 0.7 },\n      "keywords": { "type": "array", "title": "关键词列表", "items": { "type": "string" } }\n    }\n  }\n}'
 })
 const codeEditor = CodeMirror.fromTextArea($('codeInput'), {
   lineNumbers: true,
