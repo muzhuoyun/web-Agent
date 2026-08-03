@@ -154,6 +154,46 @@ async function initPlugin(ctx) {
   } catch (e) { console.log('[adult-guard] 加载学习词库失败:', e.message) }
   let keywords = dedupe(defaultKeywords.concat(extraKw, learnedKeywords))
 
+  // ===== 负反馈机制（自动去除）=====
+  // 关键词命中但 LLM 反复判定非成人 → 移出活跃词库，记入无关词列表（永久备忘，无论 LLM 如何推荐都不再加入）
+  const FALSE_HIT_LIMIT = 3
+  let falseCounts = {}
+  let irrelevantKeywords = []
+  try {
+    const r = await chrome.storage.local.get(['ag_irrelevant_keywords', 'ag_keyword_false_counts'])
+    if (Array.isArray(r['ag_irrelevant_keywords'])) irrelevantKeywords = r['ag_irrelevant_keywords']
+    if (r['ag_keyword_false_counts'] && typeof r['ag_keyword_false_counts'] === 'object') falseCounts = r['ag_keyword_false_counts']
+  } catch (e) { console.log('[adult-guard] 加载负反馈数据失败:', e.message) }
+  const irrelevantSet = new Set(irrelevantKeywords)
+  keywords = keywords.filter(k => !irrelevantSet.has(k)) // 无关词不再参与检测
+  const persistNegative = async () => {
+    try {
+      await chrome.storage.local.set({ ag_keyword_false_counts: falseCounts, ag_irrelevant_keywords: irrelevantKeywords })
+    } catch (e) { console.log('[adult-guard] 保存负反馈状态失败:', e.message) }
+  }
+  function penalizeHits(hits) {
+    let changed = false
+    for (const k of hits) {
+      if (irrelevantSet.has(k)) continue
+      falseCounts[k] = (falseCounts[k] || 0) + 1
+      changed = true
+      if (falseCounts[k] >= FALSE_HIT_LIMIT) {
+        delete falseCounts[k]
+        irrelevantKeywords.push(k); irrelevantSet.add(k)
+        console.log('[adult-guard] 🚫 关键词反复误命中，移入无关词列表:', k)
+      }
+    }
+    if (changed) {
+      keywords = keywords.filter(k => !irrelevantSet.has(k))
+      persistNegative()
+    }
+  }
+  function resetFalseCounts(hits) {
+    let changed = false
+    for (const k of hits) if (falseCounts[k]) { delete falseCounts[k]; changed = true }
+    if (changed) persistNegative()
+  }
+
   let blocked = false  // 已屏蔽则不再重复检测
   let lastSig = -1     // 上次检测时的内容指纹
   let llmRunning = false  // 上一轮 LLM 是否还在返回（不并发调用）
@@ -199,9 +239,9 @@ async function initPlugin(ctx) {
     if (!text || text.length < 50) { console.log('[adult-guard] 页面文本过短(<50)，跳过检测'); return }
 
     const lower = text.toLowerCase()
-    const hit = keywords.some(k => lower.includes(k))
-    console.log('[adult-guard] 关键词:', hit ? '命中' : '未命中')
-    if (!hit) return
+    const hits = keywords.filter(k => lower.includes(k))
+    console.log('[adult-guard] 关键词命中:', hits.length ? JSON.stringify(hits) : '无')
+    if (!hits.length) return
 
     console.log('[adult-guard] 调 LLM...')
     // 串行化：上一轮 LLM 未返回时不并发调用，标记待补检，返回后自动重检
@@ -215,10 +255,15 @@ async function initPlugin(ctx) {
       let result = ''
       for await (const chunk of api.createLLMStream(msg)) { result += chunk }
       console.log('[adult-guard] LLM:', result)
-      if (result.toLowerCase().includes('true')) blockPage(text)
+      if (result.toLowerCase().includes('true')) {
+        resetFalseCounts(hits) // 命中有效，清零负反馈计数
+        blockPage(text, true, hits) // confirmed：LLM 确认为成人内容
+      } else {
+        penalizeHits(hits) // LLM 判定非成人：为所有命中的关键词记负反馈
+      }
     } catch (e) {
       console.log('[adult-guard] LLM 失败:', e.message)
-      if (hit) blockPage(text)
+      if (hit) blockPage(text, false, hits) // 兜底屏蔽（关键词命中但无法复核），不确认内容性质
     } finally {
       llmRunning = false
       if (llmDirty && !blocked) { llmDirty = false; console.log('[adult-guard] 补检上一轮期间的内容变化'); runDetection() }
@@ -245,7 +290,7 @@ async function initPlugin(ctx) {
       const lowerText = pageText.toLowerCase()
       for (const kw of parseKeywords(raw)) {
         const s = sanitizeKeyword(kw)
-        if (!s || known.has(s) || batch.has(s)) continue
+        if (!s || known.has(s) || batch.has(s) || irrelevantSet.has(s)) continue // 无关词列表中的词永不重新加入
         if (!lowerText.includes(s)) continue // 词必须真实出现在页面文本中，防 LLM 幻觉造词
         batch.add(s); added.push(s)
       }
@@ -262,23 +307,31 @@ async function initPlugin(ctx) {
     }
   }
 
-  function blockPage(pageText) {
+  const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  function blockPage(pageText, confirmed, hits) {
     blocked = true  // 先置位：清空 body 会触发 MutationObserver，被 blocked 挡住不会死循环
     console.log('[adult-guard] 屏蔽!')
+    // 屏蔽页展示命中的关键词（最多列 5 个），让用户知道屏蔽原因
+    const hitAll = hits || []
+    const hitHtml = hitAll.length
+      ? '<div style="margin-top:16px;color:rgba(255,255,255,.75);font-size:13px;line-height:1.8;word-break:break-all">命中关键词：<span style="color:#fca5a5">' + hitAll.slice(0, 5).map(escHtml).join('、') + '</span>' + (hitAll.length > 5 ? ' 等 ' + hitAll.length + ' 个' : '') + '</div>'
+      : ''
+    const bodyHtml = '<div style="text-align:center;padding:48px;max-width:500px;color:#fff"><div style="font-size:64px;margin-bottom:16px">🛡️</div><h1 style="color:#f87171;font-size:24px;margin-bottom:8px">内容已被屏蔽</h1><p style="color:rgba(255,255,255,.6);line-height:1.6">此页面已被 AI 内容过滤器自动屏蔽。</p>' + hitHtml + '<div style="margin-top:24px;padding:6px 16px;border-radius:20px;background:rgba(248,113,113,.15);color:#fca5a5;font-size:12px;display:inline-block;border:1px solid rgba(248,113,113,.2)">AI 内容安全卫士 · 实时守护</div></div>'
     // document.open() 重置整个文档：销毁页面脚本上下文（定时器/事件监听），
     // 页面 JS 彻底停止（否则如 YouTube 会持续请求已失效的 blob URL 报 ERR_FILE_NOT_FOUND）
     try {
       document.open()
-      document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>⚠️ 内容已屏蔽</title></head><body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)"><div style="text-align:center;padding:48px;max-width:500px;color:#fff"><div style="font-size:64px;margin-bottom:16px">🛡️</div><h1 style="color:#f87171;font-size:24px;margin-bottom:8px">内容已被屏蔽</h1><p style="color:rgba(255,255,255,.6);line-height:1.6">此页面已被 AI 内容过滤器自动屏蔽。</p><div style="margin-top:24px;padding:6px 16px;border-radius:20px;background:rgba(248,113,113,.15);color:#fca5a5;font-size:12px;display:inline-block;border:1px solid rgba(248,113,113,.2)">AI 内容安全卫士 · 实时守护</div></div></body></html>')
+      document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>⚠️ 内容已屏蔽</title></head><body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)">' + bodyHtml + '</body></html>')
       document.close()
     } catch (e) {
       // 兜底：直接清空原内容
       document.body.innerHTML = ''
       document.body.style.cssText = 'margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)'
-      document.body.innerHTML = '<div style="text-align:center;padding:48px;max-width:500px;color:#fff"><div style="font-size:64px;margin-bottom:16px">🛡️</div><h1 style="color:#f87171;font-size:24px;margin-bottom:8px">内容已被屏蔽</h1><p style="color:rgba(255,255,255,.6);line-height:1.6">此页面已被 AI 内容过滤器自动屏蔽。</p><div style="margin-top:24px;padding:6px 16px;border-radius:20px;background:rgba(248,113,113,.15);color:#fca5a5;font-size:12px;display:inline-block;border:1px solid rgba(248,113,113,.2)">AI 内容安全卫士 · 实时守护</div></div>'
+      document.body.innerHTML = bodyHtml
     }
-    // 屏蔽后从页面内容挖掘新关键词，补充自动学习词库（文本已在上层捕获，异步执行不阻塞）
-    if (pageText) mineKeywords(pageText)
+    // 只有 LLM 确认为成人内容（confirmed）才挖掘新关键词；
+    // 连接失败走兜底屏蔽时页面性质未确认，不挖词
+    if (confirmed && pageText) mineKeywords(pageText)
   }
 
   // 首次扫描

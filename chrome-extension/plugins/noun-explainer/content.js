@@ -37,7 +37,7 @@ async function initPlugin(ctx) {
     function injectStyles() {
       if (injected) return; injected = true
       const s = Object.assign(document.createElement('style'), { id: 'ai-ns' })
-      s.textContent = '.ai-ns-popup{all:initial;position:fixed;z-index:2147483640;width:380px;max-height:460px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.12);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.6;color:#1f2937;overflow:hidden;opacity:0;transform:translateY(8px)scale(.97);transition:opacity .2s,transform .2s;pointer-events:none;display:flex;flex-direction:column}.ai-ns-popup-visible{opacity:1;transform:translateY(0)scale(1);pointer-events:auto}.ai-ns-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e5e7eb;flex-shrink:0;cursor:grab;user-select:none}.ai-ns-close{all:unset;cursor:pointer;font-size:20px;line-height:1;color:#9ca3af;padding:0 4px;border-radius:4px}.ai-ns-close:hover{color:#ef4444;background:#fef2f2}.ai-ns-sel{padding:8px 14px;background:#fefce8;border-bottom:1px solid #fef08a;font-size:13px;color:#92400e;flex-shrink:0}.ai-ns-body{padding:14px;overflow-y:auto;flex:1;min-height:0;font-size:14px;line-height:1.7}.ai-ns-body code{font-family:monospace;background:#f3f4f6;padding:1px 5px;border-radius:4px;color:#be185d}.ai-ns-body pre{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:12px;overflow-x:auto;margin:8px 0;font-size:13px}.ai-ns-err{color:#dc2626;font-size:13px;padding:8px;background:#fef2f2;border-radius:6px}.ai-ns-actions{display:flex;gap:6px;padding:8px 14px;border-top:1px solid #e5e7eb;background:#f8fafc;flex-shrink:0}.ai-ns-btn{all:unset;cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;background:#fff;border:1px solid #d1d5db;color:#374151}.ai-ns-btn:hover{background:#f3f4f6}.ai-ns-input{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid #e5e7eb;background:#fff;flex-shrink:0;align-items:flex-end}.ai-ns-textarea{all:unset;flex:1;min-height:40px;max-height:88px;resize:none;font-size:13px;line-height:1.5;color:#1f2937;background:#f9fafb;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;box-sizing:border-box;font-family:inherit}.ai-ns-textarea:focus{border-color:#3b82f6;background:#fff;outline:none}.ai-ns-go{flex-shrink:0;padding:8px 14px;font-size:13px;border:none;border-radius:6px;background:#3b82f6;color:#fff;cursor:pointer}.ai-ns-go:hover{background:#2563eb}@media(prefers-color-scheme:dark){.ai-ns-popup{background:#1f2937;border-color:#374151;color:#e5e7eb}.ai-ns-header{background:#111827;border-color:#374151}.ai-ns-close{color:#6b7280}.ai-ns-close:hover{color:#f87171;background:#3b1a1a}.ai-ns-sel{background:#422006;border-color:#78350f;color:#fdba74}.ai-ns-body code{background:#374151;color:#f9a8d4}.ai-ns-body pre{background:#111827;border-color:#374151}.ai-ns-err{background:#450a0a;color:#fca5a5}.ai-ns-actions{background:#111827;border-color:#374151}.ai-ns-btn{background:#374151;border-color:#4b5563;color:#e5e7eb}.ai-ns-btn:hover{background:#4b5563}.ai-ns-input{background:#1f2937;border-color:#374151}.ai-ns-textarea{background:#111827;border-color:#4b5563;color:#e5e7eb}.ai-ns-textarea:focus{border-color:#3b82f6;background:#111827}.ai-ns-go{background:#3b82f6}.ai-ns-go:hover{background:#2563eb}}'
+      s.textContent = '.ai-ns-popup{all:initial;position:fixed;z-index:2147483640;width:380px;max-height:460px;min-width:280px;min-height:220px;resize:both;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.12);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.6;color:#1f2937;overflow:auto;opacity:0;transform:translateY(8px)scale(.97);transition:opacity .2s,transform .2s;pointer-events:none;display:flex;flex-direction:column}.ai-ns-popup-visible{opacity:1;transform:translateY(0)scale(1);pointer-events:auto}.ai-ns-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e5e7eb;flex-shrink:0;cursor:grab;user-select:none}.ai-ns-close{all:unset;cursor:pointer;font-size:20px;line-height:1;color:#9ca3af;padding:0 4px;border-radius:4px}.ai-ns-close:hover{color:#ef4444;background:#fef2f2}.ai-ns-sel{padding:8px 14px;background:#fefce8;border-bottom:1px solid #fef08a;font-size:13px;color:#92400e;flex-shrink:0}.ai-ns-body{padding:14px;overflow-y:auto;flex:1;min-height:0;font-size:14px;line-height:1.7}.ai-ns-body code{font-family:monospace;background:#f3f4f6;padding:1px 5px;border-radius:4px;color:#be185d}.ai-ns-body pre{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:12px;overflow-x:auto;margin:8px 0;font-size:13px}.ai-ns-err{color:#dc2626;font-size:13px;padding:8px;background:#fef2f2;border-radius:6px}.ai-ns-actions{display:flex;gap:6px;padding:8px 14px;border-top:1px solid #e5e7eb;background:#f8fafc;flex-shrink:0}.ai-ns-btn{all:unset;cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;background:#fff;border:1px solid #d1d5db;color:#374151}.ai-ns-btn:hover{background:#f3f4f6}.ai-ns-input{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid #e5e7eb;background:#fff;flex-shrink:0;align-items:flex-end}.ai-ns-textarea{all:unset;flex:1;min-height:40px;max-height:88px;resize:none;font-size:13px;line-height:1.5;color:#1f2937;background:#f9fafb;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;box-sizing:border-box;font-family:inherit}.ai-ns-textarea:focus{border-color:#3b82f6;background:#fff;outline:none}.ai-ns-go{flex-shrink:0;padding:8px 14px;font-size:13px;border:none;border-radius:6px;background:#3b82f6;color:#fff;cursor:pointer}.ai-ns-go:hover{background:#2563eb}.ai-ns-q{font-size:13px;line-height:1.5;color:#374151;word-break:break-all}.ai-ns-sugs{display:flex;flex-direction:column;gap:6px;padding:8px 14px;border-bottom:1px solid #e5e7eb;background:#f8fafc;flex-shrink:0}.ai-ns-sugs-title{font-size:12px;color:#6b7280}.ai-ns-sugs-list{display:flex;flex-direction:column;gap:6px}.ai-ns-sug{all:unset;cursor:pointer;text-align:left;font-size:13px;line-height:1.5;padding:6px 10px;border-radius:8px;background:#fff;border:1px solid #d1d5db;color:#374151}.ai-ns-sug:hover{border-color:#3b82f6;background:#eff6ff;color:#1d4ed8}@media(prefers-color-scheme:dark){.ai-ns-popup{background:#1f2937;border-color:#374151;color:#e5e7eb}.ai-ns-header{background:#111827;border-color:#374151}.ai-ns-close{color:#6b7280}.ai-ns-close:hover{color:#f87171;background:#3b1a1a}.ai-ns-sel{background:#422006;border-color:#78350f;color:#fdba74}.ai-ns-body code{background:#374151;color:#f9a8d4}.ai-ns-body pre{background:#111827;border-color:#374151}.ai-ns-err{background:#450a0a;color:#fca5a5}.ai-ns-actions{background:#111827;border-color:#374151}.ai-ns-btn{background:#374151;border-color:#4b5563;color:#e5e7eb}.ai-ns-btn:hover{background:#4b5563}.ai-ns-input{background:#1f2937;border-color:#374151}.ai-ns-textarea{background:#111827;border-color:#4b5563;color:#e5e7eb}.ai-ns-textarea:focus{border-color:#3b82f6;background:#111827}.ai-ns-go{background:#3b82f6}.ai-ns-go:hover{background:#2563eb}.ai-ns-q{color:#d1d5db}.ai-ns-sugs{background:#111827;border-color:#374151}.ai-ns-sugs-title{color:#9ca3af}.ai-ns-sug{background:#1f2937;border-color:#4b5563;color:#e5e7eb}.ai-ns-sug:hover{border-color:#3b82f6;background:#1e3a8a;color:#bfdbfe}}'
       document.head.appendChild(s)
     }
 
@@ -50,7 +50,7 @@ async function initPlugin(ctx) {
     function createPopup(text) {
       const ci = Math.floor(Math.random() * 12); const el = document.createElement('div'); el.className = 'ai-ns-popup'; el.style.borderColor = BC[ci]
       const headerBg = BC[ci] + '22' // 半透明底色
-      el.innerHTML = '<div class="ai-ns-header" style="background:' + headerBg + ';border-bottom-color:' + BC[ci] + '"><span>🤖 名词解释</span><button class="ai-ns-close" data-action="close">&times;</button></div><div class="ai-ns-sel"><span style="font-weight:500;color:#a16207">选中：</span><span style="font-style:italic">' + esc(trunc(text,80)) + '</span></div><div class="ai-ns-input"><textarea class="ai-ns-textarea" rows="2" placeholder="输入提示词（留空则默认：结合上下文解释名词）"></textarea><button class="ai-ns-btn ai-ns-go" title="提交（Enter）">➤ 确定</button></div><div class="ai-ns-body"><div style="text-align:center;color:#6b7280;padding:16px 0">💬 输入提示词后点「确定」，留空默认名词解释</div></div><div class="ai-ns-actions"><button class="ai-ns-btn" data-action="copy">📋 复制</button><button class="ai-ns-btn" data-action="save">💾 存知识库</button></div>'
+      el.innerHTML = '<div class="ai-ns-header" style="background:' + headerBg + ';border-bottom-color:' + BC[ci] + '"><span>🤖 名词解释</span><button class="ai-ns-close" data-action="close">&times;</button></div><div class="ai-ns-sel"><span style="font-weight:500;color:#a16207">选中：</span><span style="font-style:italic">' + esc(trunc(text,80)) + '</span></div><div class="ai-ns-sugs"><div class="ai-ns-sugs-title">💡 猜你想问（点击提问，或自定义）</div><div class="ai-ns-sugs-list"><div style="text-align:center;color:#9ca3af;font-size:12px;padding:6px 0">⏳ AI 生成建议中...</div></div></div><div class="ai-ns-input"><textarea class="ai-ns-textarea" rows="2" placeholder="或输入你的问题（留空提交则默认：结合上下文解释名词）"></textarea><button class="ai-ns-btn ai-ns-go" title="提交（Enter）">➤ 确定</button></div><div class="ai-ns-body"><div style="text-align:center;color:#6b7280;padding:16px 0">💬 点击上方候选问题，或输入提示词后点「确定」</div></div><div class="ai-ns-actions"><button class="ai-ns-btn" data-action="copy">📋 复制</button><button class="ai-ns-btn" data-action="save">💾 存知识库</button></div>'
       return { el, ci }
     }
 
@@ -114,6 +114,7 @@ async function initPlugin(ctx) {
 
       const body = popup.querySelector('.ai-ns-body'); let content = ''
       const inputRow = popup.querySelector('.ai-ns-input'); const ta = popup.querySelector('.ai-ns-textarea')
+      const sugsRow = popup.querySelector('.ai-ns-sugs'); const sugsList = popup.querySelector('.ai-ns-sugs-list')
 
       // 构建上下文提示：userInput 留空则默认名词解释
       function buildPrompt(selText, userInput) {
@@ -129,8 +130,54 @@ async function initPlugin(ctx) {
         return `## 选中的内容\n\n${selText}\n\n${context}\n\n## 用户的要求\n\n${userInput}\n\n请结合上面的选中内容和页面上下文，根据用户的要求给出回答。`
       }
 
+      // 猜你想问：LLM 根据页面上下文 + 选中词，揣测用户最可能问的 3 个问题
+      const FALLBACK_SUGS = ['结合上下文解释这个名词', '总结这段内容', '翻译成英文']
+      function buildSuggestPrompt(selText) {
+        const t = document.title
+        const h1 = document.querySelector('h1')?.textContent?.trim?.() || ''
+        const full = document.body.innerText || ''
+        const idx = full.indexOf(selText)
+        const before = idx > 0 ? full.slice(Math.max(0, idx - 200), idx) : ''
+        const after = idx >= 0 ? full.slice(idx + selText.length, idx + selText.length + 300) : ''
+        return `用户选中了网页上的文字：「${selText}」。\n\n页面标题：${t}\nH1：${h1}\n选中前文：...${before}\n选中后文：${after}...\n\n请揣测用户最可能想问的 3 个问题（覆盖多种意图，如解释、总结、翻译、联系上下文、扩展等，不要只给解释类）。\n\n只输出 JSON 数组，3 个字符串，每个不超过 25 字，不要输出其他内容。`
+      }
+      function parseSuggestions(raw) {
+        const s = raw.indexOf('['); const e = raw.lastIndexOf(']')
+        if (s !== -1 && e > s) {
+          try {
+            const arr = JSON.parse(raw.slice(s, e + 1))
+            if (Array.isArray(arr)) return arr.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 25))
+          } catch (err) {}
+        }
+        // 兜底：按行/逗号拆分，去掉序号圆点
+        return raw.split(/[\n,]+/).map(x => x.replace(/^\s*(?:[-*\d.\s、)）]+)\s*/, '').trim()).filter(x => x.length >= 2 && x.length <= 25)
+      }
+      function renderSuggestions(opts) {
+        sugsList.innerHTML = ''
+        const list = (opts && opts.length ? opts : FALLBACK_SUGS).slice(0, 3)
+        list.forEach(o => {
+          const b = document.createElement('button')
+          b.className = 'ai-ns-sug'; b.textContent = o
+          b.onclick = function() { startAsk(o) }
+          sugsList.appendChild(b)
+        })
+      }
+      async function generateSuggestions() {
+        try {
+          const msg = [{ role: 'system', content: config.systemPrompt || '' }, { role: 'user', content: buildSuggestPrompt(text) }]
+          let raw = ''
+          for await (const chunk of api.createLLMStream(msg)) { raw += chunk }
+          renderSuggestions(parseSuggestions(raw))
+        } catch (err) {
+          renderSuggestions(FALLBACK_SUGS) // 建议生成失败时给默认 3 项兜底
+        }
+      }
+
       async function startAsk(userInput) {
-        inputRow.style.display = 'none'
+        // 收起建议区与输入框，展示用户提出的问题（留空则默认名词解释，脚本层兜底不报错）
+        sugsRow.style.display = 'none'
+        const q = userInput || '（默认）结合上下文解释名词'
+        inputRow.innerHTML = '<span class="ai-ns-q">💬 提问：' + esc(trunc(q, 60)) + '</span>'
         body.innerHTML = '<div style="text-align:center;color:#6b7280;padding:16px 0">🤔 思考中...</div>'
         const msg = [{ role: 'system', content: config.systemPrompt || '' }, { role: 'user', content: buildPrompt(text, userInput) }]
         try { for await (const chunk of api.createLLMStream(msg)) { content += chunk; body.innerHTML = md(content); body.scrollTop = body.scrollHeight } }
@@ -145,6 +192,7 @@ async function initPlugin(ctx) {
         else if (ev.key === 'Escape') { ev.stopPropagation(); treeCleanup() }
       })
       ta.focus()
+      generateSuggestions() // 弹窗打开即后台生成候选问题，不阻塞用户输入
 
       function hideAll() { popup.style.display = 'none'; lo(lid, '0') }
       function showDim() { popup.style.display = ''; popup.style.opacity = '0.3'; lo(lid, '0.15') }
