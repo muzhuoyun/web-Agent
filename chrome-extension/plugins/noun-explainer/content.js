@@ -37,7 +37,7 @@ async function initPlugin(ctx) {
     function injectStyles() {
       if (injected) return; injected = true
       const s = Object.assign(document.createElement('style'), { id: 'ai-ns' })
-      s.textContent = '.ai-ns-popup{all:initial;position:fixed;z-index:2147483640;width:380px;max-height:460px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.12);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.6;color:#1f2937;overflow:hidden;opacity:0;transform:translateY(8px)scale(.97);transition:opacity .2s,transform .2s;pointer-events:none;display:flex;flex-direction:column}.ai-ns-popup-visible{opacity:1;transform:translateY(0)scale(1);pointer-events:auto}.ai-ns-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e5e7eb;flex-shrink:0;cursor:grab;user-select:none}.ai-ns-close{all:unset;cursor:pointer;font-size:20px;line-height:1;color:#9ca3af;padding:0 4px;border-radius:4px}.ai-ns-close:hover{color:#ef4444;background:#fef2f2}.ai-ns-sel{padding:8px 14px;background:#fefce8;border-bottom:1px solid #fef08a;font-size:13px;color:#92400e;flex-shrink:0}.ai-ns-body{padding:14px;overflow-y:auto;flex:1;min-height:0;font-size:14px;line-height:1.7}.ai-ns-body code{font-family:monospace;background:#f3f4f6;padding:1px 5px;border-radius:4px;color:#be185d}.ai-ns-body pre{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:12px;overflow-x:auto;margin:8px 0;font-size:13px}.ai-ns-err{color:#dc2626;font-size:13px;padding:8px;background:#fef2f2;border-radius:6px}.ai-ns-actions{display:flex;gap:6px;padding:8px 14px;border-top:1px solid #e5e7eb;background:#f8fafc;flex-shrink:0}.ai-ns-btn{all:unset;cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;background:#fff;border:1px solid #d1d5db;color:#374151}.ai-ns-btn:hover{background:#f3f4f6}@media(prefers-color-scheme:dark){.ai-ns-popup{background:#1f2937;border-color:#374151;color:#e5e7eb}.ai-ns-header{background:#111827;border-color:#374151}.ai-ns-close{color:#6b7280}.ai-ns-close:hover{color:#f87171;background:#3b1a1a}.ai-ns-sel{background:#422006;border-color:#78350f;color:#fdba74}.ai-ns-body code{background:#374151;color:#f9a8d4}.ai-ns-body pre{background:#111827;border-color:#374151}.ai-ns-err{background:#450a0a;color:#fca5a5}.ai-ns-actions{background:#111827;border-color:#374151}.ai-ns-btn{background:#374151;border-color:#4b5563;color:#e5e7eb}.ai-ns-btn:hover{background:#4b5563}}'
+      s.textContent = '.ai-ns-popup{all:initial;position:fixed;z-index:2147483640;width:380px;max-height:460px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.12);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.6;color:#1f2937;overflow:hidden;opacity:0;transform:translateY(8px)scale(.97);transition:opacity .2s,transform .2s;pointer-events:none;display:flex;flex-direction:column}.ai-ns-popup-visible{opacity:1;transform:translateY(0)scale(1);pointer-events:auto}.ai-ns-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e5e7eb;flex-shrink:0;cursor:grab;user-select:none}.ai-ns-close{all:unset;cursor:pointer;font-size:20px;line-height:1;color:#9ca3af;padding:0 4px;border-radius:4px}.ai-ns-close:hover{color:#ef4444;background:#fef2f2}.ai-ns-sel{padding:8px 14px;background:#fefce8;border-bottom:1px solid #fef08a;font-size:13px;color:#92400e;flex-shrink:0}.ai-ns-body{padding:14px;overflow-y:auto;flex:1;min-height:0;font-size:14px;line-height:1.7}.ai-ns-body code{font-family:monospace;background:#f3f4f6;padding:1px 5px;border-radius:4px;color:#be185d}.ai-ns-body pre{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:12px;overflow-x:auto;margin:8px 0;font-size:13px}.ai-ns-err{color:#dc2626;font-size:13px;padding:8px;background:#fef2f2;border-radius:6px}.ai-ns-actions{display:flex;gap:6px;padding:8px 14px;border-top:1px solid #e5e7eb;background:#f8fafc;flex-shrink:0}.ai-ns-btn{all:unset;cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;background:#fff;border:1px solid #d1d5db;color:#374151}.ai-ns-btn:hover{background:#f3f4f6}.ai-ns-input{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid #e5e7eb;background:#fff;flex-shrink:0;align-items:flex-end}.ai-ns-textarea{all:unset;flex:1;min-height:40px;max-height:88px;resize:none;font-size:13px;line-height:1.5;color:#1f2937;background:#f9fafb;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;box-sizing:border-box;font-family:inherit}.ai-ns-textarea:focus{border-color:#3b82f6;background:#fff;outline:none}.ai-ns-go{flex-shrink:0;padding:8px 14px;font-size:13px;border:none;border-radius:6px;background:#3b82f6;color:#fff;cursor:pointer}.ai-ns-go:hover{background:#2563eb}@media(prefers-color-scheme:dark){.ai-ns-popup{background:#1f2937;border-color:#374151;color:#e5e7eb}.ai-ns-header{background:#111827;border-color:#374151}.ai-ns-close{color:#6b7280}.ai-ns-close:hover{color:#f87171;background:#3b1a1a}.ai-ns-sel{background:#422006;border-color:#78350f;color:#fdba74}.ai-ns-body code{background:#374151;color:#f9a8d4}.ai-ns-body pre{background:#111827;border-color:#374151}.ai-ns-err{background:#450a0a;color:#fca5a5}.ai-ns-actions{background:#111827;border-color:#374151}.ai-ns-btn{background:#374151;border-color:#4b5563;color:#e5e7eb}.ai-ns-btn:hover{background:#4b5563}.ai-ns-input{background:#1f2937;border-color:#374151}.ai-ns-textarea{background:#111827;border-color:#4b5563;color:#e5e7eb}.ai-ns-textarea:focus{border-color:#3b82f6;background:#111827}.ai-ns-go{background:#3b82f6}.ai-ns-go:hover{background:#2563eb}}'
       document.head.appendChild(s)
     }
 
@@ -50,7 +50,7 @@ async function initPlugin(ctx) {
     function createPopup(text) {
       const ci = Math.floor(Math.random() * 12); const el = document.createElement('div'); el.className = 'ai-ns-popup'; el.style.borderColor = BC[ci]
       const headerBg = BC[ci] + '22' // 半透明底色
-      el.innerHTML = '<div class="ai-ns-header" style="background:' + headerBg + ';border-bottom-color:' + BC[ci] + '"><span>🤖 名词解释</span><button class="ai-ns-close" data-action="close">&times;</button></div><div class="ai-ns-sel"><span style="font-weight:500;color:#a16207">选中：</span><span style="font-style:italic">' + esc(trunc(text,80)) + '</span></div><div class="ai-ns-body"><div style="text-align:center;color:#6b7280;padding:16px 0">🤔 思考中...</div></div><div class="ai-ns-actions"><button class="ai-ns-btn" data-action="copy">📋 复制</button><button class="ai-ns-btn" data-action="save">💾 存知识库</button></div>'
+      el.innerHTML = '<div class="ai-ns-header" style="background:' + headerBg + ';border-bottom-color:' + BC[ci] + '"><span>🤖 名词解释</span><button class="ai-ns-close" data-action="close">&times;</button></div><div class="ai-ns-sel"><span style="font-weight:500;color:#a16207">选中：</span><span style="font-style:italic">' + esc(trunc(text,80)) + '</span></div><div class="ai-ns-input"><textarea class="ai-ns-textarea" rows="2" placeholder="输入提示词（留空则默认：结合上下文解释名词）"></textarea><button class="ai-ns-btn ai-ns-go" title="提交（Enter）">➤ 确定</button></div><div class="ai-ns-body"><div style="text-align:center;color:#6b7280;padding:16px 0">💬 输入提示词后点「确定」，留空默认名词解释</div></div><div class="ai-ns-actions"><button class="ai-ns-btn" data-action="copy">📋 复制</button><button class="ai-ns-btn" data-action="save">💾 存知识库</button></div>'
       return { el, ci }
     }
 
@@ -112,8 +112,11 @@ async function initPlugin(ctx) {
       const lid = addLine(hle, popup, ci)
       makeDrag(popup, function() { upLine(lid, hle, popup) })
 
-      // 构建上下文提示
-      function buildPrompt(selText) {
+      const body = popup.querySelector('.ai-ns-body'); let content = ''
+      const inputRow = popup.querySelector('.ai-ns-input'); const ta = popup.querySelector('.ai-ns-textarea')
+
+      // 构建上下文提示：userInput 留空则默认名词解释
+      function buildPrompt(selText, userInput) {
         const t = document.title, u = location.href
         const md = s => document.querySelector(s)?.content?.trim?.() || ''
         const h1 = document.querySelector('h1')?.textContent?.trim?.() || ''
@@ -121,13 +124,27 @@ async function initPlugin(ctx) {
         const idx = full.indexOf(selText)
         const before = idx > 0 ? full.slice(Math.max(0, idx - 300), idx) : ''
         const after = idx >= 0 ? full.slice(idx + selText.length, idx + selText.length + 600) : ''
-        return `## 选中的内容\n\n${selText}\n\n## 页面上下文\n- 标题：${t}\n- H1：${h1}\n- 描述：${md('meta[name="description"]')}\n- 关键词：${md('meta[name="keywords"]')}\n\n## 选中前文\n...${before}\n\n## 选中后文\n${after}...\n\n请结合上面的页面上下文，解释「${selText}」的含义，重点关注它与后文的关联。`
+        const context = `## 页面上下文\n- 标题：${t}\n- H1：${h1}\n- 描述：${md('meta[name="description"]')}\n- 关键词：${md('meta[name="keywords"]')}\n\n## 选中前文\n...${before}\n\n## 选中后文\n${after}...`
+        if (!userInput) return `## 选中的内容\n\n${selText}\n\n${context}\n\n请结合上面的页面上下文，解释「${selText}」的含义，重点关注它与后文的关联。`
+        return `## 选中的内容\n\n${selText}\n\n${context}\n\n## 用户的要求\n\n${userInput}\n\n请结合上面的选中内容和页面上下文，根据用户的要求给出回答。`
       }
 
-      const body = popup.querySelector('.ai-ns-body'); let content = ''
-      const msg = [{ role: 'system', content: config.systemPrompt || '' }, { role: 'user', content: buildPrompt(text) }]
-      try { for await (const chunk of api.createLLMStream(msg)) { content += chunk; body.innerHTML = md(content); body.scrollTop = body.scrollHeight } }
-      catch (err) { body.innerHTML = '<div class="ai-ns-err">⚠️ ' + esc(err.message) + '</div>' }
+      async function startAsk(userInput) {
+        inputRow.style.display = 'none'
+        body.innerHTML = '<div style="text-align:center;color:#6b7280;padding:16px 0">🤔 思考中...</div>'
+        const msg = [{ role: 'system', content: config.systemPrompt || '' }, { role: 'user', content: buildPrompt(text, userInput) }]
+        try { for await (const chunk of api.createLLMStream(msg)) { content += chunk; body.innerHTML = md(content); body.scrollTop = body.scrollHeight } }
+        catch (err) { body.innerHTML = '<div class="ai-ns-err">⚠️ ' + esc(err.message) + '</div>' }
+      }
+
+      // 确定按钮：留空 = 默认名词解释
+      popup.querySelector('.ai-ns-go').onclick = function() { startAsk(ta.value.trim()) }
+      ta.addEventListener('keydown', function(ev) {
+        if (ev.isComposing) return // 中文输入法选词回车不触发
+        if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); startAsk(ta.value.trim()) }
+        else if (ev.key === 'Escape') { ev.stopPropagation(); treeCleanup() }
+      })
+      ta.focus()
 
       function hideAll() { popup.style.display = 'none'; lo(lid, '0') }
       function showDim() { popup.style.display = ''; popup.style.opacity = '0.3'; lo(lid, '0.15') }

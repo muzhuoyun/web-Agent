@@ -1,9 +1,9 @@
 {
   "id": "noun-explainer",
   "name": "名词解释",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "icon": "🤖",
-  "description": "在页面上下文中解释选中的名词术语",
+  "description": "Alt+选中后输入提示词提问，留空则结合上下文解释名词术语",
   "triggers": ["alt-select", "alt-h", "alt-c"],
   "triggerLabels": {
     "alt-select": "Alt+选中",

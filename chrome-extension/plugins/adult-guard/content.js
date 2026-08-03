@@ -101,12 +101,58 @@ async function initPlugin(ctx) {
     '노모', '유모', '미시', '처녀', '순결', '쾌감', '오르가즘', '절정', '분수', '씨발',
     '좆', '씹', '섹시룩', '마스터베이션', '수간', '간음', '성교육', '성인인증', '청소년유해', '성인잡지'
   ]
-  // 关键词 = 内置默认（400 词，硬编码不可改）+ 配置里用户追加的词
-  let keywords = defaultKeywords
-  if (Array.isArray(config.keywords)) {
-    const extra = config.keywords.filter(s => typeof s === 'string' && s.trim())
-    if (extra.length) keywords = defaultKeywords.concat(extra)
+  // ===== 自更新词库（学习机制）=====
+  // 关键词 = 内置默认（400 词，硬编码）+ 配置里用户追加的词 + 自动学习的词（屏蔽后由 LLM 挖掘，存本机）
+  const dedupe = arr => Array.from(new Set(arr))
+  // 通用词黑名单：单独出现时与色情无关，会误伤正常页面（金箍棒=孙悟空/白虎=麻将武侠/探花=科举/外围=新闻政治）
+  // 精确匹配才拒绝，组合词如「色情直播」不受影响
+  const GENERIC_WORDS = new Set(['直播', '美女', '视频', '图片', '模特', '网站', '在线', '成人', '金箍棒', '白虎', '探花', '外围', '资源', '系列', '专区'])
+  function sanitizeKeyword(kw) {
+    const s = String(kw || '').trim().toLowerCase() // 统一小写，与检测时的 lower.includes 一致
+    if (!s) return null
+    if (GENERIC_WORDS.has(s)) return null // 精确命中通用词黑名单
+    // 词元级限制：单字也收；但含虚词/助词/代词等结构词的通常是句子片段，跨页面命中率极低，拒绝
+    if (/[的了是在到着给就都也还又被把啊呢吗吧啦呀我你他她它们这那]/.test(s)) return null
+    let cjk = 0
+    for (const ch of s) if (ch >= '一' && ch <= '鿿') cjk++ // 汉字计数，避免正则字符区间被编码破坏
+    if (cjk > 6) return null // 中文超过 6 字 → 描述性短语/句子片段
+    if (s.length > 32) return null
+    if (!/[\p{L}\p{N}]/u.test(s)) return null // 必须含字母/数字/汉字，排除纯符号
+    return s
   }
+  // 解析 LLM 返回的 JSON 数组（容错：代码块/前后缀文字；非 JSON 时退回提取引号字符串）
+  function parseKeywords(raw) {
+    const out = []
+    const s = raw.indexOf('['); const e = raw.lastIndexOf(']')
+    if (s !== -1 && e > s) {
+      try {
+        const arr = JSON.parse(raw.slice(s, e + 1))
+        if (Array.isArray(arr)) for (const x of arr) if (typeof x === 'string' && x.trim()) out.push(x.trim())
+      } catch (err) {}
+    }
+    if (!out.length) {
+      const re = /"([^"]{1,40})"|'([^']{1,40})'/g; let m
+      while ((m = re.exec(raw))) out.push((m[1] || m[2]).trim())
+    }
+    return out
+  }
+
+  const extraKw = Array.isArray(config.keywords) ? config.keywords.filter(s => typeof s === 'string' && s.trim()) : []
+  let learnedKeywords = []
+  try {
+    const r = await chrome.storage.local.get('ag_learned_keywords')
+    if (Array.isArray(r['ag_learned_keywords'])) {
+      // 清理历史入库的低质词（旧版本可能已存入句子片段/通用词），写回避免重复清理
+      const cleaned = r['ag_learned_keywords'].map(sanitizeKeyword).filter(Boolean)
+      if (cleaned.length !== r['ag_learned_keywords'].length) {
+        console.log('[adult-guard] 清理低质词库', r['ag_learned_keywords'].length - cleaned.length, '个（旧版本入库的句子片段/通用词）')
+        learnedKeywords = cleaned
+        chrome.storage.local.set({ ag_learned_keywords: cleaned })
+      } else learnedKeywords = cleaned
+    }
+    console.log('[adult-guard] 已加载自动学习词库', learnedKeywords.length, '个')
+  } catch (e) { console.log('[adult-guard] 加载学习词库失败:', e.message) }
+  let keywords = dedupe(defaultKeywords.concat(extraKw, learnedKeywords))
 
   let blocked = false  // 已屏蔽则不再重复检测
   let lastSig = -1     // 上次检测时的内容指纹
@@ -150,13 +196,11 @@ async function initPlugin(ctx) {
     lastSig = sig
 
     console.log('[adult-guard] 页面文本长度:', text.length)
-    console.log('[adult-guard] 页面文本预览:', JSON.stringify(text.slice(0, 1000)))
     if (!text || text.length < 50) { console.log('[adult-guard] 页面文本过短(<50)，跳过检测'); return }
 
     const lower = text.toLowerCase()
     const hit = keywords.some(k => lower.includes(k))
-    const hitKeywords = keywords.filter(k => lower.includes(k))
-    console.log('[adult-guard] 关键词:', hit ? '命中 ' + JSON.stringify(hitKeywords) : '未命中')
+    console.log('[adult-guard] 关键词:', hit ? '命中' : '未命中')
     if (!hit) return
 
     console.log('[adult-guard] 调 LLM...')
@@ -171,17 +215,54 @@ async function initPlugin(ctx) {
       let result = ''
       for await (const chunk of api.createLLMStream(msg)) { result += chunk }
       console.log('[adult-guard] LLM:', result)
-      if (result.toLowerCase().includes('true')) blockPage()
+      if (result.toLowerCase().includes('true')) blockPage(text)
     } catch (e) {
       console.log('[adult-guard] LLM 失败:', e.message)
-      if (hit) blockPage()
+      if (hit) blockPage(text)
     } finally {
       llmRunning = false
       if (llmDirty && !blocked) { llmDirty = false; console.log('[adult-guard] 补检上一轮期间的内容变化'); runDetection() }
     }
   }
 
-  function blockPage() {
+  let mining = false // 防止并发挖掘
+  // 屏蔽后调用 LLM 从页面内容挖掘新关键词，并入自动学习词库（与硬编码词库联合用于后续检测）
+  async function mineKeywords(pageText) {
+    if (mining) return
+    mining = true
+    try {
+      console.log('[adult-guard] 开始挖掘新关键词...')
+      const msg = [
+        { role: 'system', content: '你是关键词挖掘助手。只输出一个 JSON 字符串数组，不要输出任何其他内容。' },
+        { role: 'user', content: '从下面的网页文本中，挖掘与色情、成人内容直接相关的**词条级**关键词（中/英/日/韩均可，如术语、行话、网站名、艺人名、番号等）。\n\n判断标准：**这个词能否作为词典里独立收录的词条**。\n\n严格要求：\n1. 只输出词语本身（1~6 个汉字，或 1~24 个英文字母/数字），**不要输出句子或描述性短语**\n2. 示例对比：\n   好词：「成人影院」「撸友导航」「射满」「无套后入」——词条，可独立收录\n   坏词：「腿在抖」「水流的到处都是」「被操哭着求饶的母狗」——句子/描述性短语，一律不要\n3. 排除单独出现时与色情无关的通用词（如「直播」「美女」「视频」「图片」「模特」「金箍棒」「白虎」「探花」「外围」），除非与色情词组合（如「色情直播」）\n4. 每个词必须直接出现在上面的文本中\n\n只输出 JSON 数组，例如：["词1","keyword2","site3"]\n\n网页文本：\n' + pageText.slice(0, 3000) }
+      ]
+      let raw = ''
+      for await (const chunk of api.createLLMStream(msg)) { raw += chunk }
+      // 客户端权威过滤：只保留不在硬编码/配置/已学习词库中的词（大小写归一，避免误入库）
+      const known = new Set(keywords)
+      const batch = new Set()
+      const added = []
+      const lowerText = pageText.toLowerCase()
+      for (const kw of parseKeywords(raw)) {
+        const s = sanitizeKeyword(kw)
+        if (!s || known.has(s) || batch.has(s)) continue
+        if (!lowerText.includes(s)) continue // 词必须真实出现在页面文本中，防 LLM 幻觉造词
+        batch.add(s); added.push(s)
+      }
+      if (!added.length) { console.log('[adult-guard] 未挖掘到新关键词'); return }
+      learnedKeywords = dedupe(learnedKeywords.concat(added))
+      if (learnedKeywords.length > 2000) learnedKeywords = learnedKeywords.slice(-2000) // 上限 2000，防止无界增长
+      keywords = keywords.concat(added)
+      try { await chrome.storage.local.set({ ag_learned_keywords: learnedKeywords }) } catch (e) { console.log('[adult-guard] 保存词库失败:', e.message) }
+      console.log('[adult-guard] 已新增', added.length, '个关键词入库 | 联合词库总数:', keywords.length)
+    } catch (e) {
+      console.log('[adult-guard] 挖掘关键词失败:', e.message)
+    } finally {
+      mining = false
+    }
+  }
+
+  function blockPage(pageText) {
     blocked = true  // 先置位：清空 body 会触发 MutationObserver，被 blocked 挡住不会死循环
     console.log('[adult-guard] 屏蔽!')
     // document.open() 重置整个文档：销毁页面脚本上下文（定时器/事件监听），
@@ -196,6 +277,8 @@ async function initPlugin(ctx) {
       document.body.style.cssText = 'margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)'
       document.body.innerHTML = '<div style="text-align:center;padding:48px;max-width:500px;color:#fff"><div style="font-size:64px;margin-bottom:16px">🛡️</div><h1 style="color:#f87171;font-size:24px;margin-bottom:8px">内容已被屏蔽</h1><p style="color:rgba(255,255,255,.6);line-height:1.6">此页面已被 AI 内容过滤器自动屏蔽。</p><div style="margin-top:24px;padding:6px 16px;border-radius:20px;background:rgba(248,113,113,.15);color:#fca5a5;font-size:12px;display:inline-block;border:1px solid rgba(248,113,113,.2)">AI 内容安全卫士 · 实时守护</div></div>'
     }
+    // 屏蔽后从页面内容挖掘新关键词，补充自动学习词库（文本已在上层捕获，异步执行不阻塞）
+    if (pageText) mineKeywords(pageText)
   }
 
   // 首次扫描

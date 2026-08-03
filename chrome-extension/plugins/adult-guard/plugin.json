@@ -1,9 +1,9 @@
 {
   "id": "adult-guard",
   "name": "色情内容屏蔽",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "icon": "🛡️",
-  "description": "检测网页中的色情内容并自动屏蔽",
+  "description": "检测网页中的色情内容并自动屏蔽，屏蔽后自动挖掘新关键词更新词库",
   "triggers": [
     "page-load"
   ],
@@ -38,7 +38,7 @@
           "disable_array_reorder": true
         },
         "default": [],
-        "description": "默认内置 400 个敏感词（中/英/日/韩，代码内固定），此处可追加自己的词。"
+        "description": "默认内置 400 个敏感词（中/英/日/韩，代码内固定），此处可追加自己的词。另有自动学习词库：页面被屏蔽后自动用 LLM 挖掘新词，存本机（ag_learned_keywords），三者联合判断。"
       }
     }
   },
