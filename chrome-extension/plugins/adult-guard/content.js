@@ -104,18 +104,18 @@ async function initPlugin(ctx) {
   // ===== 自更新词库（学习机制）=====
   // 关键词 = 内置默认（400 词，硬编码）+ 配置里用户追加的词 + 自动学习的词（屏蔽后由 LLM 挖掘，存本机）
   const dedupe = arr => Array.from(new Set(arr))
+  function cjkCount(s) { let c = 0; for (const ch of s) if (ch >= '一' && ch <= '鿿') c++; return c } // 汉字计数，避免正则字符区间被编码破坏
+  function escapeReg(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
   // 通用词黑名单：单独出现时与色情无关，会误伤正常页面（金箍棒=孙悟空/白虎=麻将武侠/探花=科举/外围=新闻政治）
   // 精确匹配才拒绝，组合词如「色情直播」不受影响
   const GENERIC_WORDS = new Set(['直播', '美女', '视频', '图片', '模特', '网站', '在线', '成人', '金箍棒', '白虎', '探花', '外围', '资源', '系列', '专区'])
   function sanitizeKeyword(kw) {
     const s = String(kw || '').trim().toLowerCase() // 统一小写，与检测时的 lower.includes 一致
-    if (!s) return null
+    if (!s || s.length < 2) return null // 单字（中/英）会命中牛奶/奶茶/assistant 等无关词，拒绝
     if (GENERIC_WORDS.has(s)) return null // 精确命中通用词黑名单
-    // 词元级限制：单字也收；但含虚词/助词/代词等结构词的通常是句子片段，跨页面命中率极低，拒绝
+    // 词元级限制：含虚词/助词/代词等结构词的通常是句子片段，跨页面命中率极低，拒绝
     if (/[的了是在到着给就都也还又被把啊呢吗吧啦呀我你他她它们这那]/.test(s)) return null
-    let cjk = 0
-    for (const ch of s) if (ch >= '一' && ch <= '鿿') cjk++ // 汉字计数，避免正则字符区间被编码破坏
-    if (cjk > 6) return null // 中文超过 6 字 → 描述性短语/句子片段
+    if (cjkCount(s) > 6) return null // 中文超过 6 字 → 描述性短语/句子片段
     if (s.length > 32) return null
     if (!/[\p{L}\p{N}]/u.test(s)) return null // 必须含字母/数字/汉字，排除纯符号
     return s
@@ -239,7 +239,9 @@ async function initPlugin(ctx) {
     if (!text || text.length < 50) { console.log('[adult-guard] 页面文本过短(<50)，跳过检测'); return }
 
     const lower = text.toLowerCase()
-    const hits = keywords.filter(k => lower.includes(k))
+    // 中文关键词用包含匹配；英文/数字关键词用词边界匹配（\b），
+    // 避免 ass 命中 assistant、cum 命中 custom、奶命中奶茶 等误屏蔽
+    const hits = keywords.filter(k => cjkCount(k) > 0 ? lower.includes(k) : new RegExp('\\b' + escapeReg(k) + '\\b', 'i').test(lower))
     console.log('[adult-guard] 关键词命中:', hits.length ? JSON.stringify(hits) : '无')
     if (!hits.length) return
 
@@ -279,7 +281,7 @@ async function initPlugin(ctx) {
       console.log('[adult-guard] 开始挖掘新关键词...')
       const msg = [
         { role: 'system', content: '你是关键词挖掘助手。只输出一个 JSON 字符串数组，不要输出任何其他内容。' },
-        { role: 'user', content: '从下面的网页文本中，挖掘与色情、成人内容直接相关的**词条级**关键词（中/英/日/韩均可，如术语、行话、网站名、艺人名、番号等）。\n\n判断标准：**这个词能否作为词典里独立收录的词条**。\n\n严格要求：\n1. 只输出词语本身（1~6 个汉字，或 1~24 个英文字母/数字），**不要输出句子或描述性短语**\n2. 示例对比：\n   好词：「成人影院」「撸友导航」「射满」「无套后入」——词条，可独立收录\n   坏词：「腿在抖」「水流的到处都是」「被操哭着求饶的母狗」——句子/描述性短语，一律不要\n3. 排除单独出现时与色情无关的通用词（如「直播」「美女」「视频」「图片」「模特」「金箍棒」「白虎」「探花」「外围」），除非与色情词组合（如「色情直播」）\n4. 每个词必须直接出现在上面的文本中\n\n只输出 JSON 数组，例如：["词1","keyword2","site3"]\n\n网页文本：\n' + pageText.slice(0, 3000) }
+        { role: 'user', content: '从下面的网页文本中，挖掘与色情、成人内容直接相关的**词条级**关键词（中/英/日/韩均可，如术语、行话、网站名、艺人名、番号等）。\n\n判断标准：**这个词能否作为词典里独立收录的词条**。\n\n严格要求：\n1. 只输出词语本身（2~6 个汉字，或 2~24 个英文字母/数字）；**不要输出单字**；**英文单词必须能独立成词**，不能是其他单词的一部分（如「ass」是 assistant 的一部分，不要输出）；**不要输出句子或描述性短语**\n2. 示例对比：\n   好词：「成人影院」「撸友导航」「射满」「无套后入」——词条，可独立收录\n   坏词：「腿在抖」「水流的到处都是」「被操哭着求饶的母狗」——句子/描述性短语，一律不要\n3. 排除单独出现时与色情无关的通用词（如「直播」「美女」「视频」「图片」「模特」「金箍棒」「白虎」「探花」「外围」），除非与色情词组合（如「色情直播」）\n4. 每个词必须直接出现在上面的文本中\n\n只输出 JSON 数组，例如：["词1","keyword2","site3"]\n\n网页文本：\n' + pageText.slice(0, 3000) }
       ]
       let raw = ''
       for await (const chunk of api.createLLMStream(msg)) { raw += chunk }
