@@ -235,7 +235,7 @@ function showDetailStatus(msg, type) {
 // ─── 设置页 ───
 const MODEL_ENDPOINTS = {
   'gpt-4o-mini': 'https://api.openai.com/v1', 'gpt-4o': 'https://api.openai.com/v1',
-  'deepseek-chat': 'https://api.deepseek.com/v1', 'qwen-plus': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  'deepseek-v4-flash': 'https://api.deepseek.com/v1', 'qwen-plus': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   'claude-sonnet-4-6': 'https://api.anthropic.com/v1', 'gemini-2.0-flash': 'https://generativelanguage.googleapis.com/v1beta/openai',
 }
 

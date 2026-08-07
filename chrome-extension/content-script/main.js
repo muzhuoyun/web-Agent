@@ -15,7 +15,11 @@
     let pending = null
 
     function init() {
-      try { port = chrome.runtime.connect({ name: 'plugin-llm' }) } catch (e) { error = new Error('连接失败'); return }
+      try { port = chrome.runtime.connect({ name: 'plugin-llm' }) } catch (e) {
+        // 扩展被 reload 后，旧标签页的 content script 无法再连接（context 失效），提示刷新页面
+        error = new Error(chrome.runtime?.id === undefined ? '扩展已重载，请刷新页面后重试' : '连接失败')
+        return
+      }
       port.onMessage.addListener(msg => {
         switch (msg.type) {
           case 'CHUNK':

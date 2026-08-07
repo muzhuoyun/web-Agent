@@ -235,7 +235,9 @@ async function streamLLM(messages, config, port, signal) {
       messages,
       stream: true,
       temperature: 0.7,
-      max_tokens: 1000
+      max_tokens: 1000,
+      // DeepSeek V4 思考模式默认开启(effort=high)；插件任务(审核/解释/建议)不需要推理，显式关闭省时省钱
+      ...(model.includes('deepseek-v4') ? { thinking: { type: 'disabled' } } : {})
     }),
     signal
   })

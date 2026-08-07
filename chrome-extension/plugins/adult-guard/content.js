@@ -156,7 +156,7 @@ async function initPlugin(ctx) {
 
   // ===== 负反馈机制（自动去除）=====
   // 关键词命中但 LLM 反复判定非成人 → 移出活跃词库，记入无关词列表（永久备忘，无论 LLM 如何推荐都不再加入）
-  const FALSE_HIT_LIMIT = 3
+  const FALSE_HIT_LIMIT = 5
   let falseCounts = {}
   let irrelevantKeywords = []
   try {
@@ -195,6 +195,8 @@ async function initPlugin(ctx) {
   }
 
   let blocked = false  // 已屏蔽则不再重复检测
+  let llmDown = false  // LLM 持续不可用（如扩展已重载），降级停止检测
+  let llmFailStreak = 0 // 连续 LLM 失败次数
   let lastSig = -1     // 上次检测时的内容指纹
   let llmRunning = false  // 上一轮 LLM 是否还在返回（不并发调用）
   let llmDirty = false    // LLM 运行期间内容又变化，待补检
@@ -229,7 +231,7 @@ async function initPlugin(ctx) {
   // 检测当前页面内容（首次扫描 & 内容变化后都会调用）
   // preExtracted：observer 已提取好的文本（相似度与检测共用同一份，避免重复提取）
   async function runDetection(preExtracted) {
-    if (blocked) return
+    if (blocked || llmDown) return
     const text = preExtracted !== undefined ? preExtracted : extractPageText()
     const sig = fnvHash(text)
     if (sig === lastSig) { console.log('[adult-guard] 内容未变化，跳过检测'); return }
@@ -257,6 +259,7 @@ async function initPlugin(ctx) {
       let result = ''
       for await (const chunk of api.createLLMStream(msg)) { result += chunk }
       console.log('[adult-guard] LLM:', result)
+      llmFailStreak = 0 // 连接正常，重置失败计数
       if (result.toLowerCase().includes('true')) {
         resetFalseCounts(hits) // 命中有效，清零负反馈计数
         blockPage(text, true, hits) // confirmed：LLM 确认为成人内容
@@ -265,7 +268,14 @@ async function initPlugin(ctx) {
       }
     } catch (e) {
       console.log('[adult-guard] LLM 失败:', e.message)
-      if (hit) blockPage(text, false, hits) // 兜底屏蔽（关键词命中但无法复核），不确认内容性质
+      llmFailStreak++
+      if (llmFailStreak >= 3) {
+        // 连续 3 次连接失败（如扩展被 reload 后旧标签页失联），停止检测避免误屏蔽，刷新页面恢复
+        llmDown = true
+        console.log('[adult-guard] 连续 3 次连接失败，扩展可能已重载，已停止检测（刷新页面恢复）')
+        return
+      }
+      if (hits.length) blockPage(text, false, hits) // 兜底屏蔽（关键词命中但无法复核），不确认内容性质
     } finally {
       llmRunning = false
       if (llmDirty && !blocked) { llmDirty = false; console.log('[adult-guard] 补检上一轮期间的内容变化'); runDetection() }
