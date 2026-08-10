@@ -47,6 +47,20 @@ function extractPageText() {
   }
 }
 
+// 检测人机验证页（Cloudflare Managed Challenge / Turnstile 等）：验证页的文本不是真实页面内容，
+// 专注模式若拿它判定会得到不可信结果并污染缓存，检测到后必须等待验证通过（或页面重载）再判定
+function isChallengePage() {
+  try {
+    const title = (document.title || '').toLowerCase()
+    const text = (document.body ? document.body.textContent : '').slice(0, 3000).toLowerCase()
+    if (/just a moment|attention required|checking your browser|verify you are human|正在检查|验证您的浏览器|人机验证/.test(title)) return true
+    if (/checking your browser|verify you are human|just a moment/i.test(text)) return true
+    return !!document.querySelector('#challenge-running, #cf-challenge-running, iframe[src*="challenges.cloudflare.com"]')
+  } catch (e) {
+    return false
+  }
+}
+
 async function initPlugin(ctx) {
   const { api, config } = ctx
   console.log('[adult-guard] 插件已启动')
@@ -202,6 +216,24 @@ async function initPlugin(ctx) {
   let llmDirty = false    // LLM 运行期间内容又变化，待补检
   let prevShingles = null // 上一轮提交时的内容指纹（字符 bigram 集合）
 
+  // ===== 专注模式 =====
+  // 开启后屏蔽以娱乐为主题的网站（游戏/漫画/短视频/直播等）；判定结果按网站(hostname)缓存，同网站不重复调 LLM
+  const FOCUS_CACHE_KEY = 'ag_focus_cache'
+  const FOCUS_CACHE_MAX = 500
+  let focusCache = [] // [{ h: host, r: 'yes'|'no', t: 时间戳 }]
+  try {
+    const r = await chrome.storage.local.get(FOCUS_CACHE_KEY)
+    if (Array.isArray(r[FOCUS_CACHE_KEY])) focusCache = r[FOCUS_CACHE_KEY]
+  } catch (e) { console.log('[adult-guard] 加载专注模式缓存失败:', e.message) }
+  const getFocusCache = host => { const e = focusCache.find(x => x.h === host); return e ? e.r : undefined }
+  const setFocusCache = (host, result) => {
+    focusCache = focusCache.filter(x => x.h !== host)
+    focusCache.push({ h: host, r: result, t: Date.now() })
+    if (focusCache.length > FOCUS_CACHE_MAX) focusCache = focusCache.sort((a, b) => a.t - b.t).slice(-FOCUS_CACHE_MAX) // 上限 500，超出淘汰最旧
+    chrome.storage.local.set({ [FOCUS_CACHE_KEY]: focusCache }).catch(() => {})
+  }
+  let focusChecked = false // 当前页面只判定一次
+
   // FNV-1a 哈希（对提取后的文本做指纹，只用于判断内容是否变化）
   function fnvHash(text) {
     let h = 2166136261
@@ -320,25 +352,33 @@ async function initPlugin(ctx) {
   }
 
   const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  function blockPage(pageText, confirmed, hits) {
+  // 屏蔽页配色主题：danger=成人内容（警示红/深蓝紫），focus=专注模式（提醒琥珀/暖棕），视觉上明显区分
+  const PAGE_THEMES = {
+    danger: { bg: 'linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)', accent: '#f87171', badgeBg: 'rgba(248,113,113,.15)', badgeBorder: 'rgba(248,113,113,.2)' },
+    focus:  { bg: 'linear-gradient(135deg,#1c1917,#2a2622,#3d3120)', accent: '#fbbf24', badgeBg: 'rgba(251,191,36,.15)', badgeBorder: 'rgba(251,191,36,.25)' }
+  }
+  function blockPage(pageText, confirmed, hits, reason, heading, theme) {
     blocked = true  // 先置位：清空 body 会触发 MutationObserver，被 blocked 挡住不会死循环
     console.log('[adult-guard] 屏蔽!')
-    // 屏蔽页展示命中的关键词（最多列 5 个），让用户知道屏蔽原因
+    // 屏蔽页展示屏蔽原因（专注模式）与命中的关键词（最多列 5 个），让用户知道屏蔽理由
     const hitAll = hits || []
+    const title = heading || '内容已被屏蔽'   // 专注模式等特殊场景可自定义主标题（如「请专心工作」）
+    const t = PAGE_THEMES[theme] || PAGE_THEMES.danger
+    const reasonHtml = reason ? '<div style="margin-top:16px;color:rgba(255,255,255,.75);font-size:13px;line-height:1.8">' + escHtml(reason) + '</div>' : ''
     const hitHtml = hitAll.length
       ? '<div style="margin-top:16px;color:rgba(255,255,255,.75);font-size:13px;line-height:1.8;word-break:break-all">命中关键词：<span style="color:#fca5a5">' + hitAll.slice(0, 5).map(escHtml).join('、') + '</span>' + (hitAll.length > 5 ? ' 等 ' + hitAll.length + ' 个' : '') + '</div>'
       : ''
-    const bodyHtml = '<div style="text-align:center;padding:48px;max-width:500px;color:#fff"><div style="font-size:64px;margin-bottom:16px">🛡️</div><h1 style="color:#f87171;font-size:24px;margin-bottom:8px">内容已被屏蔽</h1><p style="color:rgba(255,255,255,.6);line-height:1.6">此页面已被 AI 内容过滤器自动屏蔽。</p>' + hitHtml + '<div style="margin-top:24px;padding:6px 16px;border-radius:20px;background:rgba(248,113,113,.15);color:#fca5a5;font-size:12px;display:inline-block;border:1px solid rgba(248,113,113,.2)">AI 内容安全卫士 · 实时守护</div></div>'
+    const bodyHtml = '<div style="text-align:center;padding:48px;max-width:500px;color:#fff"><div style="font-size:64px;margin-bottom:16px">🛡️</div><h1 style="color:' + t.accent + ';font-size:24px;margin-bottom:8px">' + escHtml(title) + '</h1><p style="color:rgba(255,255,255,.6);line-height:1.6">此页面已被 AI 内容过滤器自动屏蔽。</p>' + reasonHtml + hitHtml + '<div style="margin-top:24px;padding:6px 16px;border-radius:20px;background:' + t.badgeBg + ';color:' + t.accent + ';font-size:12px;display:inline-block;border:1px solid ' + t.badgeBorder + '">AI 内容安全卫士 · 实时守护</div></div>'
     // document.open() 重置整个文档：销毁页面脚本上下文（定时器/事件监听），
     // 页面 JS 彻底停止（否则如 YouTube 会持续请求已失效的 blob URL 报 ERR_FILE_NOT_FOUND）
     try {
       document.open()
-      document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>⚠️ 内容已屏蔽</title></head><body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)">' + bodyHtml + '</body></html>')
+      document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>⚠️ ' + escHtml(title) + '</title></head><body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;background:' + t.bg + '">' + bodyHtml + '</body></html>')
       document.close()
     } catch (e) {
       // 兜底：直接清空原内容
       document.body.innerHTML = ''
-      document.body.style.cssText = 'margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)'
+      document.body.style.cssText = 'margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:' + t.bg
       document.body.innerHTML = bodyHtml
     }
     // 只有 LLM 确认为成人内容（confirmed）才挖掘新关键词；
@@ -346,8 +386,66 @@ async function initPlugin(ctx) {
     if (confirmed && pageText) mineKeywords(pageText)
   }
 
+  // ===== 专注模式：判断网站是否以娱乐为主题 =====
+  // 页面加载完毕后（load 事件 + 8s 兜底）调用；结果按 hostname 缓存，命中缓存不再调 LLM
+  const FOCUS_TIMEOUT_MS = 300000 // 等待 LLM 空闲超过 5 分钟放弃本次判定
+  const CHALLENGE_WAIT_MS = 60000 // 人机验证页最长等待 60s，超时放弃（保持放行，等用户手动刷新）
+  let focusStart = 0
+  async function runFocusCheck() {
+    if (focusChecked || blocked || llmDown) return
+    if (llmRunning) {
+      if (Date.now() - focusStart > FOCUS_TIMEOUT_MS) { focusChecked = true; console.log('[adult-guard][专注] 等待超时，放弃本次判定'); return }
+      setTimeout(runFocusCheck, 300) // 成人检测的 LLM 占用中，稍后重试（不并发调用）
+      return
+    }
+    // 人机验证页：页面文本不可信，不判定不屏蔽不缓存；保持 focusChecked=false 轮询重查，
+    // 覆盖两种形态——同页填充（Turnstile 通过后挑战特征消失）与整页重载（新上下文自动重新走 load 流程）
+    if (isChallengePage()) {
+      if (Date.now() - focusStart > CHALLENGE_WAIT_MS) { focusChecked = true; console.log('[adult-guard][专注] 人机验证等待超时，放弃本次判定'); return }
+      console.log('[adult-guard][专注] 检测到人机验证页，等待验证通过...')
+      setTimeout(runFocusCheck, 2000)
+      return
+    }
+    focusChecked = true
+    const host = location.hostname.replace(/^www\./, '')
+    const cached = getFocusCache(host)
+    if (cached === 'yes') { console.log('[adult-guard][专注] 缓存命中：娱乐主题，屏蔽'); blockPage(null, true, [], '专注模式 · 该网站以娱乐为主题', '请专心工作', 'focus'); return }
+    if (cached === 'no') { console.log('[adult-guard][专注] 缓存命中：非娱乐主题，放行'); return }
+    console.log('[adult-guard][专注] 调 LLM 判断网站主题...')
+    llmRunning = true
+    try {
+      const msg = [
+        { role: 'system', content: '你是一个网站主题分类助手。判断给定网站是否「以娱乐为主题」，只回答 true 或 false，不要输出任何其他内容。\n\n以娱乐为主题：网站的核心功能就是提供娱乐消遣内容，如游戏、漫画、小说、影视、短视频、直播、音乐、色情等，用户打开它就是为了消遣。\n注意例外：YouTube、Bilibili 等综合视频平台虽然娱乐视频很多，但属于综合内容创作平台，不算以娱乐为主题；新闻、社交、工具、办公、购物、教育、金融类网站也不算。' },
+        { role: 'user', content: '网址: ' + location.href + '\n\n页面文字（节选）:\n' + extractPageText().slice(0, 1500) }
+      ]
+      let result = ''
+      for await (const chunk of api.createLLMStream(msg)) { result += chunk }
+      console.log('[adult-guard][专注] LLM:', result)
+      if (!result.trim()) { console.log('[adult-guard][专注] LLM 空响应，不缓存不屏蔽，刷新页面后重试'); return }
+      const isEnt = /true/i.test(result)
+      setFocusCache(host, isEnt ? 'yes' : 'no')
+      if (isEnt) blockPage(null, true, [], '专注模式 · 该网站以娱乐为主题', '请专心工作', 'focus')
+    } catch (e) {
+      console.log('[adult-guard][专注] LLM 失败:', e.message)
+      // 失败不屏蔽也不缓存——刷新页面后重新判定
+    } finally {
+      llmRunning = false
+      if (llmDirty && !blocked) { llmDirty = false; console.log('[adult-guard] 补检上一轮期间的内容变化'); runDetection() }
+    }
+  }
+
   // 首次扫描
   await runDetection()
+
+  // 专注模式触发：页面加载完毕后判定一次（load 事件；8s 未触发 load 也兜底执行）
+  if (config.focusMode) {
+    focusStart = Date.now()
+    if (document.readyState === 'complete') { setTimeout(runFocusCheck, 500) }
+    else {
+      window.addEventListener('load', runFocusCheck)
+      setTimeout(runFocusCheck, 8000)
+    }
+  }
   // 初始化相似度基线（与检测同一份提取文本）
   prevShingles = textShingles(extractPageText())
 

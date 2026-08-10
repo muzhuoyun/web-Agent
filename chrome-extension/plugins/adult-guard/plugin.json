@@ -27,6 +27,12 @@
         ],
         "default": "中"
       },
+      "focusMode": {
+        "type": "boolean",
+        "title": "专注模式",
+        "description": "开启后，以娱乐为主题的网站会被屏蔽（如游戏、漫画、短视频、直播等）。页面加载完成后把网址和页面文字交给 AI 判定，判定结果按网站缓存，不重复调用。注意：YouTube、Bilibili 等综合视频平台不算娱乐主题。",
+        "default": false
+      },
       "keywords": {
         "type": "array",
         "title": "追加关键词（可选）",
