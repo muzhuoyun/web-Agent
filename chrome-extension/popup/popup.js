@@ -173,7 +173,8 @@ function showDetail(id) {
       if (res?.meta) config = res.meta.config || {}
     } catch (_) {}
 
-    const schema = p.configSchema || { type: 'object', properties: {} }
+    // 所有二值字段统一渲染为 toggle（boolean → format: 'checkbox'），递归覆盖嵌套结构
+    const schema = makeBooleanCheckboxes(p.configSchema || { type: 'object', properties: {} })
     // 只传配置中实际存在的属性，缺失键由 JSONEditor 用 schema default 填充
     const startval = {}
     for (const key of Object.keys(schema.properties || {})) {
@@ -194,6 +195,18 @@ function showDetail(id) {
       disable_array_delete_all_rows: true,
       disable_array_delete_last_row: true
     })
+    // 统一 description 挂载位置：jsoneditor 把 checkbox/输入框等基础类型字段的说明文字渲染在控件 div
+    // 内部，而 array/object 等容器字段是字段容器的直接子节点——渲染完成后把前者也移到容器直接子节点，
+    // 保证所有字段的说明文字都在「标题/控件之下独立一行」（p.je-form-input-label 是 description 的固定结构）
+    const normalizeDescriptions = () => {
+      container.querySelectorAll('p.je-form-input-label').forEach(p => {
+        const field = p.closest('[data-schemapath]')
+        if (!field || p.parentElement === field) return // 已是字段容器直接子节点（array/object）的跳过
+        field.appendChild(p)
+      })
+    }
+    if (cfgEditor.ready) normalizeDescriptions()
+    else cfgEditor.on('ready', normalizeDescriptions)
   }).catch(e => {
     $('cfgDynamicFields').innerHTML =
       `<div style="padding:8px 12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:6px;color:var(--danger);font-size:12px">配置编辑器加载失败: ${esc(e.message)}</div>`
@@ -321,4 +334,26 @@ function checkServerStatus() {
 // ─── 工具 ───
 function esc(s) {
   const d = document.createElement('div'); d.textContent = s; return d.innerHTML
+}
+
+// boolean 字段统一渲染为 checkbox（popup CSS 再样式化为 toggle 开关），避免默认的 true/false 下拉框。
+// 递归处理 properties/items/patternProperties/additionalProperties 中的所有 boolean 节点；
+// 深拷贝后注入，不改动插件原始 schema。
+function makeBooleanCheckboxes(schema) {
+  const clone = JSON.parse(JSON.stringify(schema))
+  const walk = node => {
+    if (!node || typeof node !== 'object') return
+    if (node.type === 'boolean') node.format = 'checkbox'
+    if (node.properties && typeof node.properties === 'object') {
+      for (const key of Object.keys(node.properties)) walk(node.properties[key])
+    }
+    if (Array.isArray(node.items)) { for (const it of node.items) walk(it) }
+    else if (node.items && typeof node.items === 'object') walk(node.items)
+    if (node.patternProperties && typeof node.patternProperties === 'object') {
+      for (const key of Object.keys(node.patternProperties)) walk(node.patternProperties[key])
+    }
+    if (node.additionalProperties && typeof node.additionalProperties === 'object') walk(node.additionalProperties)
+  }
+  walk(clone)
+  return clone
 }

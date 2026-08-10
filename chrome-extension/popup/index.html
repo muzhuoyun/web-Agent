@@ -106,31 +106,75 @@
     .server-dot.offline { background: var(--danger); }
 
     /* ─── JSONEditor 表单适配（无框化：窄弹窗里不显示多余的框/边框）─── */
-    /* 根对象标题行（「插件配置」）：纯文本标题，无框 */
-    [data-schemapath="root"] > .je-header {
-      display: block;
-      font-weight: 600;
-      font-size: 13px;
-      color: var(--text);
-      margin-bottom: 6px;
+    /* 二值配置（boolean 字段，jsoneditor 渲染为 checkbox）→ 样式化为 toggle 开关（popup.js 统一注入 format: checkbox） */
+    #cfgDynamicFields input[type="checkbox"] {
+      -webkit-appearance: none; appearance: none;
+      /* jsoneditor 会给 checkbox 加 inline style width:auto（.je-checkbox），inline 优先级最高，
+         必须 !important 才能压成 toggle 轨道宽度 */
+      width: 36px !important; height: 20px; border-radius: 10px;
+      background: var(--border); border: none; outline: none; cursor: pointer;
+      position: relative; vertical-align: middle; margin: 0 6px 0 0; flex-shrink: 0;
+      transition: background 0.15s;
     }
+    #cfgDynamicFields input[type="checkbox"]::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25);
+      transition: transform 0.15s;
+    }
+    #cfgDynamicFields input[type="checkbox"]:checked { background: var(--primary); }
+    #cfgDynamicFields input[type="checkbox"]:checked::after { transform: translateX(16px); }
+    /* 二值开关布局：jsoneditor 把 checkbox 插在标题文字前面（label > [input, 文字]），
+       用 flex row-reverse 把视觉顺序反转成「文字在左、开关在右」，space-between 把开关推到最右。
+       所有 boolean 字段（任意插件、任意嵌套）统一生效 */
+    #cfgDynamicFields [data-schematype="boolean"] label {
+      display: flex;
+      flex-direction: row-reverse;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 0;
+    }
+    #cfgDynamicFields [data-schematype="boolean"] label input[type="checkbox"] { margin: 0; }
+    /* ─── JSONEditor 表单适配（无框化 + 视觉层级）───
+       解析 configSchema 的渲染层级（所有插件、任意嵌套结构通用）：
+         层级一  大标题   = schema 根 title（「插件配置」）   → 14px/700/正文色
+         层级二  条目标题 = 各字段的 title（任意类型）        → 11px/500/灰
+         层级三  说明文字 = 各字段的 description             → 10px/更淡
+       渲染结构：容器类型字段（object/array）标题是 span.je-header.h3（h3 自带大字号，
+       必须覆盖）；基础类型是 .je-form-input-label；checkbox 是裸 label（继承全局 label 规则） */
     .je-object__container { margin-top: 4px; }
     .je-form-input-label { color: var(--muted); font-size: 11px; font-weight: 500; }
     .je-form-input-label .required { color: var(--danger); }
-    /* 数组/对象字段标题（渲染为 .je-header）：与 label 同款灰色小字（根标题有独立规则，不受影响） */
-    [data-schematype="array"] > .je-header {
+    /* 层级二：条目标题（object/array 等容器字段；基础类型已由 .je-form-input-label 覆盖） */
+    [data-schematype="array"] > .je-header,
+    [data-schematype="object"] > .je-header {
       display: block;
       color: var(--muted);
       font-size: 11px;
       font-weight: 500;
       margin-bottom: 4px;
     }
-    /* 字段描述（jsoneditor 把 description 渲染为无类 <p>，仅在配置表单容器内）：与标题同款小字灰色 */
+    /* 层级一：大标题（schema 根 title）——定义在条目标题之后，靠后定义覆盖同特异性规则
+       （根对象 schematype 也是 object，两条规则都会命中根标题，后定义的胜出） */
+    [data-schemapath="root"] > .je-header {
+      display: block;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+    /* 层级三：说明文字（description，class .je-form-input-label，兜底裸 p）：必须比条目标题更小更淡。
+       jsoneditor 注入的 #theme-html 样式表带 div[data-theme="html"] .je-form-input-label{font-weight:bold}，
+       特异性高于本级规则且注入晚于 head 样式，必须 !important 压掉粗体，与裸 p 说明保持同一视觉 */
+    #cfgDynamicFields .je-form-input-description,
     #cfgDynamicFields p {
       color: var(--muted) !important;
-      font-size: 11px !important;
+      font-size: 10px !important;
+      font-weight: 400 !important;
       font-style: normal !important;
       margin: 2px 0 4px;
+      opacity: 0.85;
     }
     /* 库默认 height:300px，弹窗里太高；用更高特异性覆盖（不用 !important，避免挡住拖拽伸缩） */
     #cfgDynamicFields .je-textarea { height: auto; min-height: 60px; }
