@@ -8,6 +8,13 @@
   console.log('[AI Agent] API 已注入')
 
   // ─── LLM 流式 ───
+  // 清洗消息内容：页面文本可能含孤立代理对（截断的 emoji / 花体字母，常见于社交媒体用户名），
+  // JSON.stringify 会把它序列化成 \uD835 这类转义，部分严格解析器（如 DeepSeek）会报
+  // "unexpected end of hex escape"，统一替换为 U+FFFD 保证 JSON body 合法
+  function sanitizeContent(s) {
+    return String(s).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '�')
+  }
+
   function createLLMStream(messages) {
     let port = null
     const queue = []
@@ -23,27 +30,30 @@
       port.onMessage.addListener(msg => {
         switch (msg.type) {
           case 'CHUNK':
-            if (pending) { pending({ value: msg.text, done: false }); pending = null }
+            if (pending) { const p = pending; pending = null; p.res({ value: msg.text, done: false }) }
             else queue.push(msg.text)
             break
           case 'DONE': done = true; port?.disconnect(); port = null
-            if (pending) { pending({ value: undefined, done: true }); pending = null }; break
+            if (pending) { const p = pending; pending = null; p.res({ value: undefined, done: true }) }; break
           case 'ERROR': error = new Error(msg.message); port?.disconnect(); port = null
-            if (pending) { pending({ value: undefined, done: true }); pending = null }; break
+            // 直接 reject 挂起的迭代（不依赖 disconnect 的 done 兜底），错误必须抛给调用方
+            if (pending) { const p = pending; pending = null; p.rej(error) }; break
         }
       })
-      port.onDisconnect.addListener(() => { done = true; port = null; if (pending) { pending({ value: undefined, done: true }); pending = null } })
-      port.postMessage({ type: 'LLM_STREAM', messages })
+      port.onDisconnect.addListener(() => { done = true; port = null; if (pending) { const p = pending; pending = null; p.res({ value: undefined, done: true }) } })
+      port.postMessage({ type: 'LLM_STREAM', messages: messages.map(m => ({ ...m, content: sanitizeContent(m.content) })) })
     }
     init()
     return {
       [Symbol.asyncIterator]() {
         return {
           next() {
+            // error 优先于 done：SW 发 ERROR 时 onDisconnect 会把 done 置 true，
+            // 若先查 done 会让 for await 静默结束，错误被吞、调用方拿到空结果
+            if (error) return Promise.reject(error)
             if (queue.length) return Promise.resolve({ value: queue.shift(), done: false })
             if (done) return Promise.resolve({ value: undefined, done: true })
-            if (error) return Promise.reject(error)
-            return new Promise(r => { pending = r })
+            return new Promise((res, rej) => { pending = { res, rej } })
           },
           return() { if (port) { try { port.postMessage({ type: 'CANCEL' }) } catch(_) {} try { port.disconnect() } catch(_) {} port = null } return Promise.resolve({ value: undefined, done: true }) }
         }
