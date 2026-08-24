@@ -61,12 +61,43 @@ function isChallengePage() {
   }
 }
 
+// 判断是否局域网/内网页面：localhost、回环地址、私有网段（10/8、172.16/12、192.168/16）、
+// 链路本地（169.254/16、IPv6 fe80::）以及保留的本地域名后缀（.local 为 mDNS、.lan 为常见路由器域名、.internal 为 RFC 8375 保留内网域名）
+function isLanHost() {
+  try {
+    const host = (location.hostname || '').toLowerCase().replace(/^\[|\]$/g, '') // 去掉 IPv6 地址的方括号
+    if (!host) return false
+    if (host === 'localhost' || host.endsWith('.localhost')) return true
+    if (host === '::1' || host === '0:0:0:0:0:0:0:1' || host.startsWith('fe80:')) return true
+    if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true
+    const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+    if (m) {
+      const a = +m[1], b = +m[2]
+      if (a === 10) return true
+      if (a === 192 && b === 168) return true
+      if (a === 172 && b >= 16 && b <= 31) return true
+      if (a === 169 && b === 254) return true
+      return false
+    }
+    return host.endsWith('.local') || host.endsWith('.lan') || host.endsWith('.internal')
+  } catch (e) {
+    return false
+  }
+}
+
 async function initPlugin(ctx) {
   const { api, config } = ctx
   console.log('[adult-guard] 插件已启动')
 
   // 只在顶层页面检测（iframe 里的空 body 会产生噪音）
   if (window.top !== window) { console.log('[adult-guard] 在 iframe 中，跳过检测'); return }
+
+  // 屏蔽范围：局域网/内网页面默认不屏蔽（localhost、路由器后台、公司内网等），
+  // 开启配置 blockLan 后局域网页面同样纳入检测
+  if (!config.blockLan && isLanHost()) {
+    console.log('[adult-guard] 局域网/内网页面，已放行（blockLan=false）')
+    return
+  }
 
   // 关键词列表：从插件配置读取（JSON Schema array 字段），未配置或为空时用默认列表（中/英/日/韩各 100）
   const defaultKeywords = [

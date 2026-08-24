@@ -1,7 +1,7 @@
 {
   "id": "adult-guard",
   "name": "色情内容屏蔽",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "icon": "🛡️",
   "description": "检测网页中的色情内容并自动屏蔽，屏蔽后自动挖掘新关键词更新词库，反复误命中的关键词自动移入无关词列表",
   "triggers": [
@@ -31,6 +31,12 @@
         "type": "boolean",
         "title": "专注模式",
         "description": "开启后，以娱乐为主题的网站会被屏蔽（如游戏、漫画、短视频、直播等）。页面加载完成后把网址和页面文字交给 AI 判定，判定结果按网站缓存，不重复调用。注意：YouTube、Bilibili 等综合视频平台不算娱乐主题。",
+        "default": false
+      },
+      "blockLan": {
+        "type": "boolean",
+        "title": "屏蔽局域网/内网网页",
+        "description": "默认关闭：localhost、127.0.0.1、路由器后台、公司内网等局域网/内网网页一律放行，不检测不屏蔽。开启后，局域网页面同样纳入检测与屏蔽。",
         "default": false
       },
       "keywords": {
