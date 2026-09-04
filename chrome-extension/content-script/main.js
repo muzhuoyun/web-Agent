@@ -97,11 +97,6 @@
     } catch (_) { return true }
   }
 
-  // ─── 存知识库 ───
-  function saveToKB(data) {
-    chrome.runtime.sendMessage({ type: 'SAVE_TO_KB', data }).catch(() => {})
-  }
-
   // ─── 打开侧边栏（封装 SW 通信）───
   function openSidePanel(html, title) {
     chrome.storage.local.set({ sidepanel_data: { html, title, time: Date.now() } }, function() {
@@ -110,5 +105,5 @@
   }
 
   // ─── 暴露给插件 ───
-  window.__aiAPI = { createLLMStream, getPageContext, getPluginConfig, isPluginEnabled, saveToKB, openSidePanel }
+  window.__aiAPI = { createLLMStream, getPageContext, getPluginConfig, isPluginEnabled, openSidePanel }
 })()

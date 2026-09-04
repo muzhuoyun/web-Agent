@@ -10,12 +10,10 @@ import { readFile, writeFile, mkdir, access } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import crypto from 'crypto'
 import * as vm from 'vm'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, '..', 'data')
-const KB_FILE = join(DATA_DIR, 'knowledge_base.json')
 const EXTENSION_DIR = join(__dirname, '..', '..', 'chrome-extension')
 const PLUGINS_DIR = join(EXTENSION_DIR, 'plugins')
 
@@ -24,7 +22,6 @@ const WS_PORT = 3456
 const HTTP_PORT = 3457
 
 // ─── 全局状态 ───
-let knowledgeBase = []      // 内存中的知识库
 let extensionClients = new Set()  // 已连接的 extension
 let hadClientBefore = false // 日志防抖
 
@@ -50,9 +47,6 @@ console.log('╚═════════════════════�
 
 // 确保数据目录存在
 await ensureDataDir()
-
-// 加载已有知识库
-await loadKnowledgeBase()
 
 // 启动 WebSocket 服务器
 startWebSocketServer()
@@ -123,14 +117,6 @@ function startWebSocketServer() {
 // ─── 消息路由 ───
 async function handleMessage(ws, msg) {
   switch (msg.type) {
-    case 'KB_SAVE':
-      await handleKBSave(ws, msg.data)
-      break
-
-    case 'KB_SEARCH':
-      await handleKBSearch(ws, msg.query, msg.topK || 5)
-      break
-
     case 'FILE_READ':
       await handleFileRead(ws, msg.path)
       break
@@ -203,117 +189,6 @@ async function handleMessage(ws, msg) {
       }))
   }
 }
-
-// ─────────────────────────────────────────────
-//  知识库操作
-// ─────────────────────────────────────────────
-
-async function handleKBSave(ws, data) {
-  try {
-    const entry = {
-      id: crypto.randomUUID(),
-      term: data.term || '',
-      explanation: data.explanation || '',
-      content: data.content || data.explanation || '',
-      url: data.url || '',
-      title: data.title || '',
-      timestamp: data.timestamp || Date.now()
-    }
-
-    // 计算嵌入向量（如果配置了 embedding API）
-    try {
-      entry.embedding = await getEmbedding(entry.content)
-    } catch (e) {
-      console.log('[KB] ⚠️ 嵌入计算失败（跳过向量索引）:', e.message)
-      entry.embedding = null
-    }
-
-    knowledgeBase.push(entry)
-
-    // 持久化
-    await saveKnowledgeBase()
-
-    console.log(`[KB] ✅ 已保存: "${entry.term || entry.content.slice(0, 40)}..."`)
-    ws.send(JSON.stringify({
-      type: 'KB_SAVE_RESULT',
-      success: true,
-      id: entry.id,
-      count: knowledgeBase.length
-    }))
-  } catch (e) {
-    console.error('[KB] ❌ 保存失败:', e.message)
-    ws.send(JSON.stringify({
-      type: 'KB_SAVE_RESULT',
-      success: false,
-      message: e.message
-    }))
-  }
-}
-
-async function handleKBSearch(ws, query, topK) {
-  try {
-    if (knowledgeBase.length === 0) {
-      ws.send(JSON.stringify({
-        type: 'KB_SEARCH_RESULT',
-        results: [],
-        total: 0
-      }))
-      return
-    }
-
-    // 计算查询的嵌入向量
-    let queryEmb = null
-    try {
-      queryEmb = await getEmbedding(query)
-    } catch (e) {
-      // 无法嵌入时，用关键词匹配
-      console.log('[KB] ⚠️ 查询嵌入失败，使用关键词搜索:', e.message)
-    }
-
-    let results
-    if (queryEmb) {
-      // 向量相似度搜索
-      const scored = knowledgeBase
-        .filter(e => e.embedding)
-        .map(entry => ({
-          ...entry,
-          score: cosineSimilarity(queryEmb, entry.embedding)
-        }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, topK)
-
-      results = scored
-    } else {
-      // 关键词降级搜索
-      const keywords = query.toLowerCase().split(/\s+/)
-      const scored = knowledgeBase
-        .map(entry => {
-          const text = (entry.term + ' ' + entry.explanation + ' ' + entry.content).toLowerCase()
-          const score = keywords.filter(k => text.includes(k)).length / keywords.length
-          return { ...entry, score }
-        })
-        .filter(e => e.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, topK)
-
-      results = scored
-    }
-
-    ws.send(JSON.stringify({
-      type: 'KB_SEARCH_RESULT',
-      results,
-      total: results.length
-    }))
-  } catch (e) {
-    console.error('[KB] ❌ 搜索失败:', e.message)
-    ws.send(JSON.stringify({
-      type: 'KB_SEARCH_RESULT',
-      error: e.message,
-      results: []
-    }))
-  }
-}
-
 // ─────────────────────────────────────────────
 //  文件操作
 // ─────────────────────────────────────────────
@@ -366,52 +241,6 @@ async function handleFileList(ws, dirPath) {
       message: `列出目录失败: ${e.message}`
     }))
   }
-}
-
-// ─────────────────────────────────────────────
-//  嵌入向量（调用 OpenAI 兼容 API）
-// ─────────────────────────────────────────────
-
-async function getEmbedding(text) {
-  const trimmed = text.slice(0, 8000)
-  if (!trimmed.trim()) throw new Error('空文本无法嵌入')
-
-  const response = await fetch('https://api.openai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY || ''}`
-    },
-    body: JSON.stringify({
-      model: 'text-embedding-3-small',
-      input: trimmed
-    })
-  })
-
-  if (!response.ok) {
-    throw new Error(`Embedding API: ${response.status}`)
-  }
-
-  const data = await response.json()
-  return data.data[0].embedding
-}
-
-// ─────────────────────────────────────────────
-//  向量搜索工具
-// ─────────────────────────────────────────────
-
-function cosineSimilarity(a, b) {
-  if (!a || !b || a.length !== b.length) return 0
-
-  let dot = 0, normA = 0, normB = 0
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i]
-    normA += a[i] * a[i]
-    normB += b[i] * b[i]
-  }
-
-  const denom = Math.sqrt(normA) * Math.sqrt(normB)
-  return denom === 0 ? 0 : dot / denom
 }
 
 // ─────────────────────────────────────────────
@@ -618,32 +447,6 @@ async function ensureDataDir() {
   }
 }
 
-async function loadKnowledgeBase() {
-  try {
-    if (existsSync(KB_FILE)) {
-      const raw = await readFile(KB_FILE, 'utf-8')
-      knowledgeBase = JSON.parse(raw)
-      console.log(`[KB] 📚 已加载知识库: ${knowledgeBase.length} 条记录`)
-    } else {
-      console.log('[KB] 📚 知识库为空（新文件）')
-      knowledgeBase = []
-    }
-  } catch (e) {
-    console.error('[KB] ❌ 加载知识库失败:', e.message)
-    knowledgeBase = []
-  }
-}
-
-async function saveKnowledgeBase() {
-  try {
-    // 移除非持久化字段（如 embedding 向量太大，可选择性保存）
-    const toSave = knowledgeBase.map(({ embedding, ...rest }) => rest)
-    await writeFile(KB_FILE, JSON.stringify(toSave, null, 2), 'utf-8')
-  } catch (e) {
-    console.error('[KB] ❌ 持久化失败:', e.message)
-  }
-}
-
 // ─────────────────────────────────────────────
 //  HTTP 服务器（健康检查 + 管理界面占位）
 // ─────────────────────────────────────────────
@@ -704,7 +507,6 @@ function startHttpServer() {
           version: '0.1.0',
           status: 'running',
           wsPort: WS_PORT,
-          kbCount: knowledgeBase.length,
           clients: extensionClients.size
         }))
         break
@@ -737,10 +539,6 @@ function startHttpServer() {
       case '/stats':
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
-          knowledgeBase: {
-            total: knowledgeBase.length,
-            lastUpdate: knowledgeBase[knowledgeBase.length - 1]?.timestamp || null
-          },
           server: {
             uptime: process.uptime(),
             memory: process.memoryUsage().heapUsed,
@@ -775,20 +573,17 @@ function startHttpServer() {
 //  优雅退出
 // ─────────────────────────────────────────────
 
-process.on('SIGINT', async () => {
+process.on('SIGINT', () => {
   console.log('\n[Server] 👋 正在关闭...')
-  await saveKnowledgeBase()
   process.exit(0)
 })
 
-process.on('SIGTERM', async () => {
+process.on('SIGTERM', () => {
   console.log('\n[Server] 👋 收到终止信号...')
-  await saveKnowledgeBase()
   process.exit(0)
 })
 
-process.on('uncaughtException', async (e) => {
+process.on('uncaughtException', (e) => {
   console.error('[Server] 💥 未捕获异常:', e.message)
-  await saveKnowledgeBase()
   process.exit(1)
 })

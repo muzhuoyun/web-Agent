@@ -107,7 +107,7 @@ async function initPlugin(ctx) {
             return '<div style="margin-top:4px"><span style="opacity:.55">' + (i + 1) + '.</span> <span style="font-style:italic">' + esc(trunc(s, 60)) + '</span></div>'
           }).join('')
         : '<span style="font-weight:500;color:#a16207">选中：</span><span style="font-style:italic">' + esc(trunc(segments[0] || '', 80)) + '</span>'
-      el.innerHTML = '<div class="ai-ns-header" style="background:' + headerBg + ';border-bottom-color:' + BC[ci] + '"><span>🤖 名词解释</span><span style="display:flex;align-items:center;gap:2px"><button class="ai-ns-close ai-ns-max" data-action="max" title="最大化 / 还原">⤢</button><button class="ai-ns-close" data-action="close" title="关闭">&times;</button></span></div><div class="ai-ns-sel">' + selHtml + '</div><div class="ai-ns-sugs"><div class="ai-ns-sugs-title">💡 猜你想问（点击提问，或自定义）</div><div class="ai-ns-sugs-list"><div style="text-align:center;color:#9ca3af;font-size:12px;padding:6px 0">⏳ AI 生成建议中...</div></div></div><div class="ai-ns-input"><textarea class="ai-ns-textarea" rows="2" placeholder="或输入你的问题（留空提交则默认：结合上下文解释名词）"></textarea><button class="ai-ns-btn ai-ns-go" title="提交（Enter）">➤ 确定</button></div><div class="ai-ns-body"><div style="text-align:center;color:#6b7280;padding:16px 0">💬 点击上方候选问题，或输入提示词后点「确定」</div></div><div class="ai-ns-actions"><button class="ai-ns-btn" data-action="copy">📋 复制</button><button class="ai-ns-btn" data-action="save">💾 存知识库</button></div>'
+      el.innerHTML = '<div class="ai-ns-header" style="background:' + headerBg + ';border-bottom-color:' + BC[ci] + '"><span>🤖 名词解释</span><span style="display:flex;align-items:center;gap:2px"><button class="ai-ns-close ai-ns-max" data-action="max" title="最大化 / 还原">⤢</button><button class="ai-ns-close" data-action="close" title="关闭">&times;</button></span></div><div class="ai-ns-sel">' + selHtml + '</div><div class="ai-ns-sugs"><div class="ai-ns-sugs-title">💡 猜你想问（点击提问，或自定义）</div><div class="ai-ns-sugs-list"><div style="text-align:center;color:#9ca3af;font-size:12px;padding:6px 0">⏳ AI 生成建议中...</div></div></div><div class="ai-ns-input"><textarea class="ai-ns-textarea" rows="2" placeholder="或输入你的问题（留空提交则默认：结合上下文解释名词）"></textarea><button class="ai-ns-btn ai-ns-go" title="提交（Enter）">➤ 确定</button></div><div class="ai-ns-body"><div style="text-align:center;color:#6b7280;padding:16px 0">💬 点击上方候选问题，或输入提示词后点「确定」</div></div><div class="ai-ns-actions"><button class="ai-ns-btn" data-action="copy">📋 复制</button></div>'
       return { el, ci }
     }
 
@@ -370,7 +370,7 @@ async function initPlugin(ctx) {
     addEventListener('blur', function() { if (!altDown) flushAcc() })
 
     function openPopup(segments, hles, ci, evTarget) {
-      const text = segments.join(' / ') // 复制、存知识库等单值场景用的合并展示
+      const text = segments.join(' / ') // 复制等单值场景用的合并展示
       const popup = createPopup(segments, ci).el; document.body.appendChild(popup)
 
       // ── 弹窗跟随被解释词 ──
@@ -615,7 +615,6 @@ async function initPlugin(ctx) {
 
       popup.querySelector('[data-action="close"]').onclick = treeCleanup
       popup.querySelector('[data-action="copy"]').onclick = function() { navigator.clipboard.writeText(content) }
-      popup.querySelector('[data-action="save"]').onclick = function() { if (!content.trim()) return; api.saveToKB({ term: text, explanation: content, url: location.href, title: document.title, timestamp: Date.now() }) }
     }
   }
 // ===== 用户逻辑结束 =====

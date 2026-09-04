@@ -159,11 +159,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       })()
       return true
 
-    case 'SAVE_TO_KB':
-      handleSaveToKB(msg.data)
-      sendResponse({ success: true })
-      break
-
     case 'GET_CONFIG':
       getConfig().then(sendResponse)
       return true
@@ -276,21 +271,8 @@ async function streamLLM(messages, config, port, signal) {
 }
 
 // ─────────────────────────────────────────────
-//  知识库 & 配置管理
+//  配置管理
 // ─────────────────────────────────────────────
-
-async function handleSaveToKB(data) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'KB_SAVE', data }))
-  }
-  try {
-    const existing = await chrome.storage.local.get('kb_cache')
-    const kb = existing.kb_cache || []
-    kb.push(data)
-    if (kb.length > 200) kb.splice(0, kb.length - 200)
-    await chrome.storage.local.set({ kb_cache: kb })
-  } catch (e) { /* ignore */ }
-}
 
 function getConfig() {
   return new Promise((resolve) => {
