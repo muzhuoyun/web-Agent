@@ -387,6 +387,31 @@ async function initPlugin(ctx) {
     // 但仅在 Alt 已松开时才认，否则会和上面那个「按 Alt 抢焦点」的 blur 混淆而提前弹窗
     addEventListener('blur', function() { if (!altDown) flushAcc() })
 
+    // ── 锚点消失即关窗 ──
+    // 被解释的对象从页面 DOM 上消失后（SPA 路由切换、虚拟列表回收、内容重渲染等），
+    // 弹窗若还留在屏幕上，用户就不知道它在解释什么了。这里统一巡检并关掉这些孤儿弹窗。
+    // 用一个共享 observer 覆盖所有弹窗，而不是每个弹窗各挂一个；
+    // 且只在有弹窗时才连接 —— 插件注入在每个页面上，常驻监听整棵 DOM 的开销不该白付。
+    let orphanTimer = null, watching = false
+    function sweepOrphans() {
+      const nodes = window.__popupTree.nodes
+      Object.keys(nodes).forEach(function(id) {
+        const n = nodes[id]
+        if (n && n.isOrphaned && n.isOrphaned() && n.closeTree) n.closeTree()
+      })
+      refreshOrphanWatch()
+    }
+    const orphanObserver = new MutationObserver(function() {
+      if (orphanTimer) return // 防抖：页面频繁改动时不要每次都全量扫描
+      orphanTimer = setTimeout(function() { orphanTimer = null; sweepOrphans() }, 300)
+    })
+    function refreshOrphanWatch() {
+      const has = Object.keys(window.__popupTree.nodes).length > 0
+      if (has && !watching) { orphanObserver.observe(document.documentElement, { childList: true, subtree: true }); watching = true }
+      else if (!has && watching) { orphanObserver.disconnect(); watching = false }
+    }
+    window.__nsRefreshOrphanWatch = refreshOrphanWatch
+
     function openPopup(segments, hles, ci, evTarget) {
       const text = segments.join(' / ') // 复制等单值场景用的合并展示
       const popup = createPopup(segments, ci).el; document.body.appendChild(popup)
@@ -655,6 +680,7 @@ async function initPlugin(ctx) {
           if (n && n.cleanup) n.cleanup()
           delete window.__popupTree.nodes[id]
         })
+        refreshOrphanWatch() // 弹窗清空后断开 DOM 监听
       }
 
       function treeCleanup() {
@@ -670,6 +696,7 @@ async function initPlugin(ctx) {
         window.__popupTree.nodes[pid].el = null
         if (window.__popupTree.nodes[pid]?.cleanup) window.__popupTree.nodes[pid].cleanup()
         delete window.__popupTree.nodes[pid]
+        refreshOrphanWatch() // 最后一个弹窗关掉后断开 DOM 监听
       }
 
       function cleanup() {
@@ -691,6 +718,12 @@ async function initPlugin(ctx) {
         popup.remove()
       }
       window.__popupTree.nodes[pid].cleanup = cleanup
+      // 供共享 observer 巡检：高亮 span 全部脱离文档，说明被解释的对象已经没了
+      window.__popupTree.nodes[pid].isOrphaned = function() {
+        return hles.length > 0 && hles.every(function(el) { return !el.isConnected })
+      }
+      window.__popupTree.nodes[pid].closeTree = treeCleanup
+      refreshOrphanWatch() // 有弹窗了，接上 DOM 监听
 
       popup.querySelector('[data-action="close"]').onclick = treeCleanup
       // 复制整段对话（多轮时逐轮导出为 markdown，而不是只给最后一个答案）
