@@ -322,6 +322,24 @@ async function initPlugin(ctx) {
       if (e.key === 'Alt') { altDown = true; e.preventDefault() }
     })
 
+    // 在「已经被选中」的文字上按下鼠标，浏览器会启动原生拖放来拖动选区，
+    // 整个手势不再派发 mouseup —— 而多段累积完全依赖 mouseup，于是静默失效。
+    // 典型触发路径：在弹窗里先拖着看一眼（已选中），再按 Alt 重选同一段做链式解释。
+    //
+    // 只在 dragstart 里 preventDefault 不够：那时拖放已经启动、原选区已被丢弃，
+    // 浏览器会从当前鼠标位置重新开始选择，等到 mouseup 时选区反而是空的。
+    // 所以必须更早一步——Alt 按下的瞬间就清掉旧选区，让这次按下从"无选区"开始，
+    // 浏览器便不会判定为拖动选区，而是正常地开始一次新的框选。
+    document.addEventListener('mousedown', function(e) {
+      if (!e.altKey) return
+      const s = window.getSelection()
+      if (s && !s.isCollapsed) s.removeAllRanges()
+    }, true)
+    // 兜底：万一仍有拖放被触发（如选区由键盘产生），直接取消掉
+    document.addEventListener('dragstart', function(e) {
+      if (e.altKey || altDown) e.preventDefault()
+    }, true)
+
     // 累积期的浮动提示：让用户知道已选几段、怎么结束
     function accIndicator(n) {
       let el = document.getElementById('ai-ns-acc')
