@@ -216,35 +216,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 //  LLM 流式调用
 // ─────────────────────────────────────────────
 
+// 插件任务（内容审核 / 名词解释 / 猜你想问）都不需要推理。
+// 思考 token 有两重代价：拖长首字延迟（流式管道要等思考吐完才出正文），
+// 且通常计入 max_tokens —— 吃满额度时正文会是空的，调用方却拿不到任何报错。
+// 各家参数名不一致，这里带上方舟/DeepSeek 系认的两种写法；
+// 万一某个端点不认这些字段直接报 400，下面会去掉它们重试一次，保证不至于整体不可用。
+const NO_THINKING = { thinking: { type: 'disabled' }, reasoning_effort: 'minimal' }
+
 async function streamLLM(messages, config, port, signal) {
   const { apiEndpoint, apiKey, model } = config
+  const t0 = Date.now()
+  const base = { model, messages, stream: true, temperature: 0.7, max_tokens: 1000 }
 
-  const response = await fetch(`${apiEndpoint}/chat/completions`, {
+  const send = body => fetch(`${apiEndpoint}/chat/completions`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 1000,
-      // DeepSeek V4 思考模式默认开启(effort=high)；插件任务(审核/解释/建议)不需要推理，显式关闭省时省钱
-      ...(model.includes('deepseek-v4') ? { thinking: { type: 'disabled' } } : {})
-    }),
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
     signal
   })
+
+  let response = await send({ ...base, ...NO_THINKING })
+  if (response.status === 400) {
+    const err = await response.text()
+    console.log('[SW] ⚠️ 关思考参数被拒绝，去掉后重试:', err.slice(0, 160))
+    response = await send(base)
+  }
 
   if (!response.ok) {
     const err = await response.text()
     throw new Error(`API 错误 (${response.status}): ${err.slice(0, 200)}`)
   }
+  const tHeaders = Date.now()
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let firstContentAt = 0, contentChars = 0, reasoningChars = 0
 
   while (true) {
     const { done, value } = await reader.read()
@@ -260,12 +267,23 @@ async function streamLLM(messages, config, port, signal) {
       if (!trimmed.startsWith('data: ')) continue
 
       try {
-        const json = JSON.parse(trimmed.slice(6))
-        const content = json.choices?.[0]?.delta?.content
-        if (content) port.postMessage({ type: 'CHUNK', text: content })
+        const delta = JSON.parse(trimmed.slice(6)).choices?.[0]?.delta || {}
+        // 思考内容仍然不转发（对这些任务无用，且 adult-guard 用 includes('true')
+        // 判定，思考里出现 true 字样会导致误屏蔽），但要统计出来用于定位延迟
+        const reasoning = delta.reasoning_content || delta.reasoning || delta.thinking
+        if (reasoning) reasoningChars += String(reasoning).length
+        if (delta.content) {
+          if (!firstContentAt) firstContentAt = Date.now()
+          contentChars += delta.content.length
+          port.postMessage({ type: 'CHUNK', text: delta.content })
+        }
       } catch (e) { /* skip parse errors */ }
     }
   }
+
+  console.log(`[SW][LLM] ${model} 响应头 ${tHeaders - t0}ms | 首字 ${firstContentAt ? firstContentAt - t0 : '—'}ms | 总耗时 ${Date.now() - t0}ms | 正文 ${contentChars} 字 | 思考 ${reasoningChars} 字`)
+  if (reasoningChars) console.log(`[SW][LLM] ⚠️ 仍收到 ${reasoningChars} 字思考内容 —— 该模型未接受关思考参数，这段时间是白等的`)
+  if (!contentChars) console.log('[SW][LLM] ⚠️ 正文为空 —— 可能思考吃满了 max_tokens，调用方会当成「未命中」处理')
 
   port.postMessage({ type: 'DONE' })
 }

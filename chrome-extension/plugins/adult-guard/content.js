@@ -87,7 +87,10 @@ function isLanHost() {
 
 async function initPlugin(ctx) {
   const { api, config } = ctx
-  console.log('[adult-guard] 插件已启动')
+  // performance.now() 以导航开始为零点，所以这个数就是「页面开始加载 → 插件真正跑起来」
+  // 的空档。MV3 的 service worker 冷启动 + getPluginConfig 往返都算在里面，
+  // 屏蔽延迟里有多少是白等在这一段，看这个数就知道。
+  console.log(`[adult-guard] 插件已启动 | 距页面加载 ${Math.round(performance.now())}ms`)
 
   // 只在顶层页面检测（iframe 里的空 body 会产生噪音）
   if (window.top !== window) { console.log('[adult-guard] 在 iframe 中，跳过检测'); return }
@@ -293,9 +296,13 @@ async function initPlugin(ctx) {
 
   // 检测当前页面内容（首次扫描 & 内容变化后都会调用）
   // preExtracted：observer 已提取好的文本（相似度与检测共用同一份，避免重复提取）
+  // 全链路分段计时：定位「屏蔽延迟」到底花在提取、关键词扫描、LLM 首字、还是渲染上
   async function runDetection(preExtracted) {
     if (blocked || llmDown) return
+    const T = { start: performance.now() }
+    const ms = t => Math.round(t) + 'ms'
     const text = preExtracted !== undefined ? preExtracted : extractPageText()
+    T.extract = performance.now() - T.start
     const sig = fnvHash(text)
     if (sig === lastSig) { console.log('[adult-guard] 内容未变化，跳过检测'); return }
     lastSig = sig
@@ -303,34 +310,56 @@ async function initPlugin(ctx) {
     console.log('[adult-guard] 页面文本长度:', text.length)
     if (!text || text.length < 50) { console.log('[adult-guard] 页面文本过短(<50)，跳过检测'); return }
 
+    const tKw = performance.now()
     const lower = text.toLowerCase()
     // 中文关键词用包含匹配；英文/数字关键词用词边界匹配（\b），
     // 避免 ass 命中 assistant、cum 命中 custom、奶命中奶茶 等误屏蔽
     const hits = keywords.filter(k => cjkCount(k) > 0 ? lower.includes(k) : new RegExp('\\b' + escapeReg(k) + '\\b', 'i').test(lower))
-    console.log('[adult-guard] 关键词命中:', hits.length ? JSON.stringify(hits) : '无')
+    T.keyword = performance.now() - tKw
+    console.log('[adult-guard] 关键词命中:', hits.length ? JSON.stringify(hits) : '无',
+      `| 提取 ${ms(T.extract)} 扫描 ${ms(T.keyword)}（${keywords.length} 词 / ${text.length} 字）`)
     if (!hits.length) return
 
     console.log('[adult-guard] 调 LLM...')
     // 串行化：上一轮 LLM 未返回时不并发调用，标记待补检，返回后自动重检
     if (llmRunning) { console.log('[adult-guard] 上一轮 LLM 未返回，标记待补检'); llmDirty = true; return }
     llmRunning = true
+    const tLlm = performance.now()
     try {
       const msg = [
         { role: 'system', content: config.systemPrompt || '你是一个内容审核助手，判断以下文字是否包含色情内容，只回答 true 或 false。' },
         { role: 'user', content: text.slice(0, 3000) }
       ]
       let result = ''
-      for await (const chunk of api.createLLMStream(msg)) { result += chunk }
-      console.log('[adult-guard] LLM:', result)
+      let tFirst = 0
+      for await (const chunk of api.createLLMStream(msg)) {
+        if (!tFirst) tFirst = performance.now() // 首字延迟：思考没关时这里会被显著拉长
+        result += chunk
+      }
+      T.llmFirst = tFirst ? tFirst - tLlm : 0
+      T.llmTotal = performance.now() - tLlm
+      console.log('[adult-guard] LLM:', JSON.stringify(result),
+        `| 首字 ${T.llmFirst ? ms(T.llmFirst) : '—'} 全部 ${ms(T.llmTotal)}`)
       llmFailStreak = 0 // 连接正常，重置失败计数
+      // 空响应不能当成「非成人」放行：思考吃满 max_tokens 时正文就是空的，
+      // 静默放行等于漏判。保持不屏蔽但也不记负反馈，等内容变化后重试。
+      if (!result.trim()) {
+        console.log('[adult-guard] ⚠️ LLM 返回空正文，本轮不判定（不屏蔽也不记负反馈），等下次内容变化重试')
+        lastSig = -1 // 清掉指纹，让同样的内容还能再检一次
+        return
+      }
       if (result.toLowerCase().includes('true')) {
         resetFalseCounts(hits) // 命中有效，清零负反馈计数
+        const tRender = performance.now()
         blockPage(text, true, hits) // confirmed：LLM 确认为成人内容
+        console.log('[adult-guard] ⏱ 屏蔽链路耗时：' +
+          `提取 ${ms(T.extract)} → 扫描 ${ms(T.keyword)} → LLM 首字 ${ms(T.llmFirst)} / 全部 ${ms(T.llmTotal)} → 渲染 ${ms(performance.now() - tRender)}` +
+          ` | 合计 ${ms(performance.now() - T.start)}`)
       } else {
         penalizeHits(hits) // LLM 判定非成人：为所有命中的关键词记负反馈
       }
     } catch (e) {
-      console.log('[adult-guard] LLM 失败:', e.message)
+      console.log('[adult-guard] LLM 失败:', e.message, `| 耗时 ${ms(performance.now() - tLlm)}`)
       llmFailStreak++
       if (llmFailStreak >= 3) {
         // 连续 3 次连接失败（如扩展被 reload 后旧标签页失联），停止检测避免误屏蔽，刷新页面恢复
@@ -444,14 +473,20 @@ async function initPlugin(ctx) {
     if (cached === 'no') { console.log('[adult-guard][专注] 缓存命中：非娱乐主题，放行'); return }
     console.log('[adult-guard][专注] 调 LLM 判断网站主题...')
     llmRunning = true
+    const tFocus = performance.now()
     try {
       const msg = [
         { role: 'system', content: '你是一个网站主题分类助手。判断给定网站是否「以娱乐为主题」，只回答 true 或 false，不要输出任何其他内容。\n\n以娱乐为主题：网站的核心功能就是提供娱乐消遣内容，如游戏、漫画、小说、影视、短视频、直播、音乐、色情等，用户打开它就是为了消遣。\n注意例外：YouTube、Bilibili 等综合视频平台虽然娱乐视频很多，但属于综合内容创作平台，不算以娱乐为主题；新闻、社交、工具、办公、购物、教育、金融类网站也不算。' },
         { role: 'user', content: '网址: ' + location.href + '\n\n页面文字（节选）:\n' + extractPageText().slice(0, 1500) }
       ]
       let result = ''
-      for await (const chunk of api.createLLMStream(msg)) { result += chunk }
-      console.log('[adult-guard][专注] LLM:', result)
+      let tFirst = 0
+      for await (const chunk of api.createLLMStream(msg)) {
+        if (!tFirst) tFirst = performance.now()
+        result += chunk
+      }
+      console.log('[adult-guard][专注] LLM:', JSON.stringify(result),
+        `| 首字 ${tFirst ? Math.round(tFirst - tFocus) + 'ms' : '—'} 全部 ${Math.round(performance.now() - tFocus)}ms`)
       if (!result.trim()) { console.log('[adult-guard][专注] LLM 空响应，不缓存不屏蔽，刷新页面后重试'); return }
       const isEnt = /true/i.test(result)
       setFocusCache(host, isEnt ? 'yes' : 'no')
