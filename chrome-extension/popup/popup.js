@@ -40,7 +40,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 模型切换
   $('model').onchange = () => {
-    $('customModelGroup').style.display = $('model').value === 'custom' ? 'block' : 'none'
+    const isCustom = $('model').value === 'custom'
+    $('customModelGroup').style.display = isCustom ? 'block' : 'none'
+    // 端点还空着时按预置补上；已填的不动 —— 用户可能用自建网关或聚合站
+    const preset = MODEL_ENDPOINTS[$('model').value]
+    if (!isCustom && preset && !$('apiEndpoint').value.trim()) $('apiEndpoint').value = preset
   }
 
 })
@@ -249,7 +253,11 @@ function showDetailStatus(msg, type) {
 }
 
 // ─── 设置页 ───
+// 预置模型 → 对应的 OpenAI 兼容端点。选中预置模型且端点还空着时自动填上，
+// 已填的不覆盖（用户可能用的是自建网关或聚合站）
+const ARK = 'https://ark.cn-beijing.volces.com/api/v3'
 const MODEL_ENDPOINTS = {
+  'doubao-seed-2.0-mini': ARK, 'doubao-seed-2.1-turbo': ARK, 'glm-5.3-flash': ARK,
   'gpt-4o-mini': 'https://api.openai.com/v1', 'gpt-4o': 'https://api.openai.com/v1',
   'deepseek-v4-flash': 'https://api.deepseek.com/v1', 'qwen-plus': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   'claude-sonnet-4-6': 'https://api.anthropic.com/v1', 'gemini-2.0-flash': 'https://generativelanguage.googleapis.com/v1beta/openai',
