@@ -84,34 +84,34 @@ async function warmUpLLM() {
 connectToLocalServer()
 // SW 每次被唤醒（含冷启动）都预热一次 —— 连接池是随 SW 生命周期一起消失的
 warmUpLLM()
-// 严格模式的幕布脚本必须在 document_start 注入，而静态 content_scripts 是
+// 严格模式的门控脚本必须在 document_start 注入，而静态 content_scripts 是
 // 所有插件共用、由 codegen 维护的，改它风险太大。改用动态注册，按配置增删。
-syncStrictCurtain()
+syncStrictGate()
 
 // ─────────────────────────────────────────────
-//  严格模式幕布的动态注册
+//  严格模式门控的动态注册
 // ─────────────────────────────────────────────
-const CURTAIN_ID = 'ag-strict-curtain'
-async function syncStrictCurtain() {
+const GATE_ID = 'ag-strict-gate'
+async function syncStrictGate() {
   try {
     const stored = await chrome.storage.local.get('plugin_cfg_adult-guard')
     const strict = !!(stored['plugin_cfg_adult-guard'] || {}).strictMode
-    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [CURTAIN_ID] }).catch(() => [])
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [GATE_ID] }).catch(() => [])
     if (strict && !existing.length) {
       await chrome.scripting.registerContentScripts([{
-        id: CURTAIN_ID,
+        id: GATE_ID,
         matches: ['<all_urls>'],
-        js: ['plugins/adult-guard/curtain.js'],
+        js: ['plugins/adult-guard/gate.js'],
         runAt: 'document_start',
         allFrames: false
       }])
-      console.log('[SW] 🎭 严格模式已开启，幕布脚本已注册（document_start）')
+      console.log('[SW] 🎭 严格模式已开启，门控脚本已注册（document_start）')
     } else if (!strict && existing.length) {
-      await chrome.scripting.unregisterContentScripts({ ids: [CURTAIN_ID] })
-      console.log('[SW] 🎭 严格模式已关闭，幕布脚本已注销')
+      await chrome.scripting.unregisterContentScripts({ ids: [GATE_ID] })
+      console.log('[SW] 🎭 严格模式已关闭，门控脚本已注销')
     }
   } catch (e) {
-    console.log('[SW] 🎭 幕布注册同步失败:', e.message)
+    console.log('[SW] 🎭 门控注册同步失败:', e.message)
   }
 }
 
@@ -262,8 +262,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.plugin?.id) {
         const { id, ...config } = msg.plugin
         chrome.storage.local.set({ [`plugin_cfg_${id}`]: config }).then(() => {
-          // 配置里可能刚改了严格模式开关，同步幕布脚本的注册状态
-          if (id === 'adult-guard') syncStrictCurtain()
+          // 配置里可能刚改了严格模式开关，同步门控脚本的注册状态
+          if (id === 'adult-guard') syncStrictGate()
           // 可选同步到服务器
           if (ws && ws.readyState === WebSocket.OPEN) {
             try { ws.send(JSON.stringify({ type: 'PLUGIN_UPDATE_META', plugin: msg.plugin })) } catch (_) {}

@@ -92,14 +92,35 @@ async function initPlugin(ctx) {
   // 屏蔽延迟里有多少是白等在这一段，看这个数就知道。
   console.log(`[adult-guard] 插件已启动 | 距页面加载 ${Math.round(performance.now())}ms`)
 
-  // ── 严格模式 ──
-  // 幕布由 curtain.js 在 document_start 挂上，这里负责在得出结论后揭幕。
-  // 任何提前 return 的分支都必须揭幕，否则页面会一直空白（curtain.js 有 8s 兜底，
-  // 但那属于失效保护，不该当成正常路径）。
-  const curtain = window.__agCurtain || null
-  const strict = !!(config.strictMode && curtain && curtain.active())
-  const lift = why => { if (curtain) curtain.lift(why) }
-  if (strict) console.log('[adult-guard][严格] 已生效，页面暂不显示，等全文检测结论')
+  // ── 严格模式（按块门控）──
+  // gate.js 在 document_start 把 body 的直接子节点默认隐藏，这里负责逐块放行。
+  // 两级闸门：本地关键词扫描 1~2ms，可以对每次 DOM 变动都跑，无命中就立刻放行，人眼无感；
+  // 只有命中才升级到 LLM（首字 0.4~2s，绝不可能每次变动都调）。
+  //
+  // 边界必须说清楚：本地闸门是文本关键词扫描，所以纯图片的成人页面、canvas/视频画面里的
+  // 内容都会被瞬间放行。严格模式能保证的是「有文字证据的成人内容不会闪现」，
+  // 而不是「不会看到成人内容」——它让检测更早，并不让检测更准。
+  const gate = window.__agGate || null
+  const strict = !!(config.strictMode && gate && gate.active())
+  const release = why => { if (gate) gate.release(why) }
+  if (strict) console.log('[adult-guard][严格] 门控已生效，内容按块放行')
+
+  // 对仍被挡住的顶层块做本地扫描：干净的立刻放行，可疑的留着等 LLM 结论
+  // 返回是否还有可疑块
+  function gateSweep() {
+    if (!strict || !gate.active()) return false
+    let suspicious = 0, approved = 0
+    gate.pending().forEach(function(el) {
+      const t = (el.textContent || '')
+      if (!t.trim()) { gate.approve(el); approved++; return } // 无文字（图片/容器）无从判断，放行
+      const low = t.toLowerCase()
+      const hit = keywords.some(k => cjkCount(k) > 0 ? low.includes(k) : new RegExp('\\b' + escapeReg(k) + '\\b', 'i').test(low))
+      if (hit) suspicious++
+      else { gate.approve(el); approved++ }
+    })
+    if (approved || suspicious) console.log(`[adult-guard][严格] 门控扫描：放行 ${approved} 块，可疑 ${suspicious} 块`)
+    return suspicious > 0
+  }
 
   // 只在顶层页面检测（iframe 里的空 body 会产生噪音）
   if (window.top !== window) { console.log('[adult-guard] 在 iframe 中，跳过检测'); return }
@@ -108,7 +129,7 @@ async function initPlugin(ctx) {
   // 开启配置 blockLan 后局域网页面同样纳入检测
   if (!config.blockLan && isLanHost()) {
     console.log('[adult-guard] 局域网/内网页面，已放行（blockLan=false）')
-    lift('局域网白名单')
+    release('局域网白名单')
     return
   }
 
@@ -304,6 +325,25 @@ async function initPlugin(ctx) {
     return union ? inter / union : 1
   }
 
+  // 严格模式与专注模式的兼容处理
+  // 幕布只由成人检测把关，而专注判定跑在 load 之后、还可能等 LLM 空闲（轮询上限 5 分钟）
+  // 或卡在人机验证页轮询（60 秒）—— 让幕布等它意味着白屏一分钟，不可接受。
+  // 折中：揭幕前顺手查一次专注模式的「缓存」结论。查缓存只需要 hostname、不调模型、
+  // 零成本，足以消掉重复访问娱乐站时「先看到页面、几秒后才被屏蔽」的闪现；
+  // 而未缓存的首次访问照旧揭幕，判定结果留给稍后的 runFocusCheck，只闪这一次。
+  function releaseOrFocusBlock(why) {
+    if (strict && config.focusMode) {
+      const host = location.hostname.replace(/^www\./, '')
+      if (getFocusCache(host) === 'yes') {
+        focusChecked = true // 结论已由缓存给出，不必再让 runFocusCheck 跑一遍
+        console.log('[adult-guard][严格] 专注模式缓存命中娱乐主题，直接屏蔽，不放行')
+        blockPage(null, true, [], '专注模式 · 该网站以娱乐为主题', '请专心工作', 'focus')
+        return
+      }
+    }
+    release(why)
+  }
+
   // 检测当前页面内容（首次扫描 & 内容变化后都会调用）
   // preExtracted：observer 已提取好的文本（相似度与检测共用同一份，避免重复提取）
   // 全链路分段计时：定位「屏蔽延迟」到底花在提取、关键词扫描、LLM 首字、还是渲染上
@@ -311,14 +351,18 @@ async function initPlugin(ctx) {
     if (blocked || llmDown) return
     const T = { start: performance.now() }
     const ms = t => Math.round(t) + 'ms'
+    // 先做一遍按块门控：干净的块立刻放行（1~2ms，人眼无感），
+    // 可疑的留着不放，等下面的判定给结论。这样即使全文判定要等一两秒，
+    // 页面上无关的部分也已经正常显示了。
+    gateSweep()
     const text = preExtracted !== undefined ? preExtracted : extractPageText()
     T.extract = performance.now() - T.start
     const sig = fnvHash(text)
-    if (sig === lastSig) { console.log('[adult-guard] 内容未变化，跳过检测'); lift('内容未变化'); return }
+    if (sig === lastSig) { console.log('[adult-guard] 内容未变化，跳过检测'); release('内容未变化'); return }
     lastSig = sig
 
     console.log('[adult-guard] 页面文本长度:', text.length)
-    if (!text || text.length < 50) { console.log('[adult-guard] 页面文本过短(<50)，跳过检测'); lift('文本过短，无需检测'); return }
+    if (!text || text.length < 50) { console.log('[adult-guard] 页面文本过短(<50)，跳过检测'); release('文本过短，无需检测'); return }
 
     const tKw = performance.now()
     const lower = text.toLowerCase()
@@ -328,7 +372,7 @@ async function initPlugin(ctx) {
     T.keyword = performance.now() - tKw
     console.log('[adult-guard] 关键词命中:', hits.length ? JSON.stringify(hits) : '无',
       `| 提取 ${ms(T.extract)} 扫描 ${ms(T.keyword)}（${keywords.length} 词 / ${text.length} 字）`)
-    if (!hits.length) { lift('关键词未命中'); return } // 严格模式下这里就放行，不调模型
+    if (!hits.length) { releaseOrFocusBlock('关键词未命中'); return } // 严格模式下这里就放行，不调模型
 
     console.log('[adult-guard] 调 LLM...')
     // 串行化：上一轮 LLM 未返回时不并发调用，标记待补检，返回后自动重检
@@ -363,14 +407,14 @@ async function initPlugin(ctx) {
         if (!rs.out.trim()) {
           // 拿不到结论：宁可显示也不要空白，但用遮罩说明情况，并清指纹等重试
           console.log('[adult-guard][严格] ⚠️ 返回空正文，改用遮罩提示并等重试')
-          lift('复核无结论，转为遮罩提示')
+          release('复核无结论，转为遮罩提示')
           showMask()
           lastSig = -1
           return
         }
         if (rs.out.toLowerCase().includes('true')) {
           resetFalseCounts(hits)
-          lift('判定为成人内容，转为正式屏蔽')
+          release('判定为成人内容，转为正式屏蔽')
           const tR = performance.now()
           blockPage(text, true, hits)
           console.log('[adult-guard][严格] ⏱ 链路耗时：' +
@@ -378,7 +422,7 @@ async function initPlugin(ctx) {
             ` | 合计 ${ms(performance.now() - T.start)}`)
         } else {
           penalizeHits(hits)
-          lift('全文检测判否')
+          releaseOrFocusBlock('全文检测判否')
           console.log(`[adult-guard][严格] ⏱ 判否放行 | 全文 ${ms(T.s2Total)} | 白屏时长 ${ms(performance.now() - T.start)}`)
         }
         return
@@ -440,13 +484,13 @@ async function initPlugin(ctx) {
         // 连续 3 次连接失败（如扩展被 reload 后旧标签页失联），停止检测避免误屏蔽，刷新页面恢复
         llmDown = true
         hideMask('已停止检测，不再保留遮挡') // 不再复核了，留着遮罩会永久挡住页面
-        lift('已停止检测') // 严格模式下必须揭幕，否则页面永久空白
+        release('已停止检测') // 严格模式下必须揭幕，否则页面永久空白
         console.log('[adult-guard] 连续 3 次连接失败，扩展可能已重载，已停止检测（刷新页面恢复）')
         return
       }
       // 关键词命中但无法复核：保留/挂上遮罩即可，不做破坏性屏蔽，等重试
       // 严格模式下先揭幕再挂遮罩 —— 让用户看到「正在复核」的说明，而不是一片空白
-      lift('复核失败，转为遮罩提示')
+      release('复核失败，转为遮罩提示')
       showMask()
       console.log('[adult-guard] 复核失败，暂以遮罩挡住，等下次内容变化重试')
       lastSig = -1
@@ -562,6 +606,10 @@ async function initPlugin(ctx) {
     focus:  { bg: 'linear-gradient(135deg,#1c1917,#2a2622,#3d3120)', accent: '#fbbf24', badgeBg: 'rgba(251,191,36,.15)', badgeBorder: 'rgba(251,191,36,.25)' }
   }
   function blockPage(pageText, confirmed, hits, reason, heading, theme) {
+    // 既然要显示我们自己的屏蔽页，就必须先揭幕。正常路径 document.open() 会连幕布样式
+    // 一起清掉，但降级分支（catch 里改 body.innerHTML）保留 documentElement，
+    // 幕布会存活下来把屏蔽页自己挡成一片空白。
+    release('转为屏蔽页')
     blocked = true  // 先置位：清空 body 会触发 MutationObserver，被 blocked 挡住不会死循环
     console.log('[adult-guard] 屏蔽!')
     // 屏蔽页展示屏蔽原因（专注模式）与命中的关键词（最多列 5 个），让用户知道屏蔽理由
@@ -645,21 +693,6 @@ async function initPlugin(ctx) {
     }
   }
 
-  // 首次扫描
-  await runDetection()
-
-  // 专注模式触发：页面加载完毕后判定一次（load 事件；8s 未触发 load 也兜底执行）
-  if (config.focusMode) {
-    focusStart = Date.now()
-    if (document.readyState === 'complete') { setTimeout(runFocusCheck, 500) }
-    else {
-      window.addEventListener('load', runFocusCheck)
-      setTimeout(runFocusCheck, 8000)
-    }
-  }
-  // 初始化相似度基线（与检测同一份提取文本）
-  prevShingles = textShingles(extractPageText())
-
   // DOM 变化事件：防抖 300ms（合并突变突刺）后，先用轻量哈希预筛（文本没变直接跳过，
   // 动画/样式/媒体加载等纯资源变化不触发提取），再对提取文本算相似度——
   //   · 与上一轮提交的提取文本相似度 > 0.8（微变）→ 忽略
@@ -668,6 +701,11 @@ async function initPlugin(ctx) {
   let recheckTimer = null
   let lastFastSig = -1
   const observer = new MutationObserver(() => {
+    // 门控扫描要同步做：新插入的顶层块已被 CSS 规则默认挡住（无竞态），
+    // 但若等下面 300ms 的防抖再放行，正常内容会白等这 300ms。
+    // 这里只遍历「仍被挡住的顶层块」，代价极小。
+    // 注意本 observer 没有订阅 attributes，所以我们打标记不会把自己再触发一遍。
+    gateSweep()
     clearTimeout(recheckTimer)
     recheckTimer = setTimeout(() => {
       const t = (document.body ? document.body.textContent : '') || ''
@@ -682,7 +720,32 @@ async function initPlugin(ctx) {
       runDetection(text)
     }, 300)
   })
-  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true })
+  // 包成函数，供上面在首次检测「之前」调用
+  function startObserver() {
+    // 初始化相似度基线（与检测同一份提取文本）
+    prevShingles = textShingles(extractPageText())
+    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true })
+  }
+
+  // 首次扫描
+  // 注意顺序：observer 必须在此之前挂好（见下方 startObserver）。
+  // runDetection 会 await LLM，而首次调用要等 0.4~2 秒 —— 若在它之后才挂 observer，
+  // 这段时间里动态插入的内容就没人放行：CSS 已把它挡住，却等不到扫描，白挡一两秒。
+  // 那恰好是最需要门控生效的窗口。
+  startObserver()
+  await runDetection()
+
+  // 专注模式触发：页面加载完毕后判定一次（load 事件；8s 未触发 load 也兜底执行）
+  if (config.focusMode) {
+    focusStart = Date.now()
+    if (document.readyState === 'complete') { setTimeout(runFocusCheck, 500) }
+    else {
+      window.addEventListener('load', runFocusCheck)
+      setTimeout(runFocusCheck, 8000)
+    }
+  }
+
+
 }
 
 // ===== 用户逻辑结束 =====
