@@ -92,6 +92,15 @@ async function initPlugin(ctx) {
   // 屏蔽延迟里有多少是白等在这一段，看这个数就知道。
   console.log(`[adult-guard] 插件已启动 | 距页面加载 ${Math.round(performance.now())}ms`)
 
+  // ── 严格模式 ──
+  // 幕布由 curtain.js 在 document_start 挂上，这里负责在得出结论后揭幕。
+  // 任何提前 return 的分支都必须揭幕，否则页面会一直空白（curtain.js 有 8s 兜底，
+  // 但那属于失效保护，不该当成正常路径）。
+  const curtain = window.__agCurtain || null
+  const strict = !!(config.strictMode && curtain && curtain.active())
+  const lift = why => { if (curtain) curtain.lift(why) }
+  if (strict) console.log('[adult-guard][严格] 已生效，页面暂不显示，等全文检测结论')
+
   // 只在顶层页面检测（iframe 里的空 body 会产生噪音）
   if (window.top !== window) { console.log('[adult-guard] 在 iframe 中，跳过检测'); return }
 
@@ -99,6 +108,7 @@ async function initPlugin(ctx) {
   // 开启配置 blockLan 后局域网页面同样纳入检测
   if (!config.blockLan && isLanHost()) {
     console.log('[adult-guard] 局域网/内网页面，已放行（blockLan=false）')
+    lift('局域网白名单')
     return
   }
 
@@ -304,11 +314,11 @@ async function initPlugin(ctx) {
     const text = preExtracted !== undefined ? preExtracted : extractPageText()
     T.extract = performance.now() - T.start
     const sig = fnvHash(text)
-    if (sig === lastSig) { console.log('[adult-guard] 内容未变化，跳过检测'); return }
+    if (sig === lastSig) { console.log('[adult-guard] 内容未变化，跳过检测'); lift('内容未变化'); return }
     lastSig = sig
 
     console.log('[adult-guard] 页面文本长度:', text.length)
-    if (!text || text.length < 50) { console.log('[adult-guard] 页面文本过短(<50)，跳过检测'); return }
+    if (!text || text.length < 50) { console.log('[adult-guard] 页面文本过短(<50)，跳过检测'); lift('文本过短，无需检测'); return }
 
     const tKw = performance.now()
     const lower = text.toLowerCase()
@@ -318,7 +328,7 @@ async function initPlugin(ctx) {
     T.keyword = performance.now() - tKw
     console.log('[adult-guard] 关键词命中:', hits.length ? JSON.stringify(hits) : '无',
       `| 提取 ${ms(T.extract)} 扫描 ${ms(T.keyword)}（${keywords.length} 词 / ${text.length} 字）`)
-    if (!hits.length) return
+    if (!hits.length) { lift('关键词未命中'); return } // 严格模式下这里就放行，不调模型
 
     console.log('[adult-guard] 调 LLM...')
     // 串行化：上一轮 LLM 未返回时不并发调用，标记待补检，返回后自动重检
@@ -342,6 +352,38 @@ async function initPlugin(ctx) {
     }
 
     try {
+      // ── 严格模式：跳过窗口判定，直接一次全文检测 ──
+      // 页面本来就被幕布藏着，没必要先用窗口抢时间；而窗口判定缺宏观语境、偏向屏蔽，
+      // 在「结论直接决定显不显示」的场合更该用准确的那一次。
+      if (strict) {
+        const CTX = 20000
+        const rs = await judge(text.slice(0, CTX), '严格·全文')
+        T.s2First = rs.stat.first; T.s2Total = rs.stat.total
+        llmFailStreak = 0
+        if (!rs.out.trim()) {
+          // 拿不到结论：宁可显示也不要空白，但用遮罩说明情况，并清指纹等重试
+          console.log('[adult-guard][严格] ⚠️ 返回空正文，改用遮罩提示并等重试')
+          lift('复核无结论，转为遮罩提示')
+          showMask()
+          lastSig = -1
+          return
+        }
+        if (rs.out.toLowerCase().includes('true')) {
+          resetFalseCounts(hits)
+          lift('判定为成人内容，转为正式屏蔽')
+          const tR = performance.now()
+          blockPage(text, true, hits)
+          console.log('[adult-guard][严格] ⏱ 链路耗时：' +
+            `提取 ${ms(T.extract)} → 扫描 ${ms(T.keyword)} → 全文 首字 ${ms(T.s2First)}/全部 ${ms(T.s2Total)} → 渲染 ${ms(performance.now() - tR)}` +
+            ` | 合计 ${ms(performance.now() - T.start)}`)
+        } else {
+          penalizeHits(hits)
+          lift('全文检测判否')
+          console.log(`[adult-guard][严格] ⏱ 判否放行 | 全文 ${ms(T.s2Total)} | 白屏时长 ${ms(performance.now() - T.start)}`)
+        }
+        return
+      }
+
       // ── 第一段：句子级窗口，快 ──
       // 只看命中词所在的句子，缺宏观语境，所以天然偏向屏蔽 —— 它的结论只用来「先罩住」，
       // 不直接删页面，误判的代价由第二段负责纠正。
@@ -398,10 +440,13 @@ async function initPlugin(ctx) {
         // 连续 3 次连接失败（如扩展被 reload 后旧标签页失联），停止检测避免误屏蔽，刷新页面恢复
         llmDown = true
         hideMask('已停止检测，不再保留遮挡') // 不再复核了，留着遮罩会永久挡住页面
+        lift('已停止检测') // 严格模式下必须揭幕，否则页面永久空白
         console.log('[adult-guard] 连续 3 次连接失败，扩展可能已重载，已停止检测（刷新页面恢复）')
         return
       }
       // 关键词命中但无法复核：保留/挂上遮罩即可，不做破坏性屏蔽，等重试
+      // 严格模式下先揭幕再挂遮罩 —— 让用户看到「正在复核」的说明，而不是一片空白
+      lift('复核失败，转为遮罩提示')
       showMask()
       console.log('[adult-guard] 复核失败，暂以遮罩挡住，等下次内容变化重试')
       lastSig = -1

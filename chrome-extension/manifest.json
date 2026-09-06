@@ -15,7 +15,7 @@
   ],
   "host_permissions": [
     "https://*/*",
-    "http://localhost:3457/*"
+    "http://*/*"
   ],
   "content_scripts": [
     {

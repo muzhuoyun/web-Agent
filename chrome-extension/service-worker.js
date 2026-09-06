@@ -84,6 +84,36 @@ async function warmUpLLM() {
 connectToLocalServer()
 // SW 每次被唤醒（含冷启动）都预热一次 —— 连接池是随 SW 生命周期一起消失的
 warmUpLLM()
+// 严格模式的幕布脚本必须在 document_start 注入，而静态 content_scripts 是
+// 所有插件共用、由 codegen 维护的，改它风险太大。改用动态注册，按配置增删。
+syncStrictCurtain()
+
+// ─────────────────────────────────────────────
+//  严格模式幕布的动态注册
+// ─────────────────────────────────────────────
+const CURTAIN_ID = 'ag-strict-curtain'
+async function syncStrictCurtain() {
+  try {
+    const stored = await chrome.storage.local.get('plugin_cfg_adult-guard')
+    const strict = !!(stored['plugin_cfg_adult-guard'] || {}).strictMode
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [CURTAIN_ID] }).catch(() => [])
+    if (strict && !existing.length) {
+      await chrome.scripting.registerContentScripts([{
+        id: CURTAIN_ID,
+        matches: ['<all_urls>'],
+        js: ['plugins/adult-guard/curtain.js'],
+        runAt: 'document_start',
+        allFrames: false
+      }])
+      console.log('[SW] 🎭 严格模式已开启，幕布脚本已注册（document_start）')
+    } else if (!strict && existing.length) {
+      await chrome.scripting.unregisterContentScripts({ ids: [CURTAIN_ID] })
+      console.log('[SW] 🎭 严格模式已关闭，幕布脚本已注销')
+    }
+  } catch (e) {
+    console.log('[SW] 🎭 幕布注册同步失败:', e.message)
+  }
+}
 
 function connectToLocalServer() {
   chrome.storage.sync.get('serverUrl', ({ serverUrl = DEFAULT_CONFIG.serverUrl }) => {
@@ -232,6 +262,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.plugin?.id) {
         const { id, ...config } = msg.plugin
         chrome.storage.local.set({ [`plugin_cfg_${id}`]: config }).then(() => {
+          // 配置里可能刚改了严格模式开关，同步幕布脚本的注册状态
+          if (id === 'adult-guard') syncStrictCurtain()
           // 可选同步到服务器
           if (ws && ws.readyState === WebSocket.OPEN) {
             try { ws.send(JSON.stringify({ type: 'PLUGIN_UPDATE_META', plugin: msg.plugin })) } catch (_) {}
