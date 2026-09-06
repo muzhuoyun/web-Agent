@@ -43,14 +43,47 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectToLocalServer()
     }
+    warmUpLLM() // 顺带保持 LLM 连接是热的
   }
 })
+
+// ─────────────────────────────────────────────
+//  LLM 连接预热
+// ─────────────────────────────────────────────
+// 方舟把响应头压到「首 token 就绪」才发（实测首字仅比响应头晚 1ms），
+// 所以单看响应头分不出建连和排队。但两段式屏蔽给了对照：
+// 第二段输入大几倍却比第一段快约 280ms，差额大致就是首个请求的
+// DNS + TLS + 路由建立成本。这里在 SW 启动和每次 keepalive 唤醒时朝同一 host
+// 打一个极小的请求把连接预热好，真正的审核请求直接复用，省掉那段握手。
+// 用 GET /models 而不是真的 chat 请求：同样能完成握手并进连接池，但不产生 token 费用。
+let lastWarmAt = 0
+async function warmUpLLM() {
+  if (Date.now() - lastWarmAt < 30000) return // 30s 内不重复预热
+  try {
+    const { apiEndpoint, apiKey } = await getConfig()
+    if (!apiKey) return // 没配 key 时预热无意义；注意不能在此之前就打时间戳，
+                        // 否则未配置期间的这次空跑会把后续 30s 的预热一起挡掉
+    lastWarmAt = Date.now()
+    const t = Date.now()
+    const res = await fetch(`${apiEndpoint}/models`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      cache: 'no-store'
+    })
+    console.log(`[SW] 🔥 LLM 连接预热完成 ${Date.now() - t}ms (HTTP ${res.status})`)
+  } catch (e) {
+    // 端点不提供 /models 也无妨：TLS 握手已完成，连接照样进了池子
+    console.log('[SW] 🔥 预热请求未成功，但连接可能已建立:', e.message)
+  }
+}
 
 // ─────────────────────────────────────────────
 //  WebSocket ↔ 本地服务器
 // ─────────────────────────────────────────────
 
 connectToLocalServer()
+// SW 每次被唤醒（含冷启动）都预热一次 —— 连接池是随 SW 生命周期一起消失的
+warmUpLLM()
 
 function connectToLocalServer() {
   chrome.storage.sync.get('serverUrl', ({ serverUrl = DEFAULT_CONFIG.serverUrl }) => {
@@ -284,7 +317,9 @@ async function streamLLM(messages, config, port, signal, options) {
     }
   }
 
-  console.log(`[SW][LLM] ${model} 响应头 ${tHeaders - t0}ms | 首字 ${firstContentAt ? firstContentAt - t0 : '—'}ms | 总耗时 ${Date.now() - t0}ms | 正文 ${contentChars} 字 | 思考 ${reasoningChars} 字`)
+  // 距上次预热的间隔：用来判断这次请求是否复用了热连接，从而判断预热到底有没有用
+  const sinceWarm = lastWarmAt ? `${t0 - lastWarmAt}ms前预热` : '未预热'
+  console.log(`[SW][LLM] ${model} 响应头 ${tHeaders - t0}ms | 首字 ${firstContentAt ? firstContentAt - t0 : '—'}ms | 总耗时 ${Date.now() - t0}ms | 输入 ${JSON.stringify(messages).length} 字 | 正文 ${contentChars} 字 | 思考 ${reasoningChars} 字 | ${sinceWarm}`)
   if (reasoningChars) console.log(`[SW][LLM] ⚠️ 仍收到 ${reasoningChars} 字思考内容 —— 该模型未接受关思考参数，这段时间是白等的`)
   if (!contentChars) console.log('[SW][LLM] ⚠️ 正文为空 —— 可能思考吃满了 max_tokens，调用方会当成「未命中」处理')
 
