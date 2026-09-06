@@ -74,7 +74,21 @@
 
     /* ─── 表单 ─── */
     .form-group { margin-bottom: 10px; }
-    label { display: block; font-size: 11px; font-weight: 500; color: var(--muted); margin-bottom: 3px; }
+    .profile-list { display: flex; flex-direction: column; gap: 5px; }
+    .profile-row {
+      display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+      cursor: pointer; font-size: 12px;
+    }
+    .profile-row:hover { border-color: var(--primary); }
+    .profile-row.active { border-color: var(--primary); background: rgba(59,130,246,0.08); }
+    .profile-main { flex: 1; min-width: 0; }
+    .profile-name { font-weight: 600; }
+    .profile-meta { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .profile-lat { font-size: 10px; color: var(--primary); flex-shrink: 0; white-space: nowrap; }
+    .profile-del { flex-shrink: 0; color: var(--muted); cursor: pointer; padding: 0 3px; font-size: 14px; }
+    .profile-del:hover { color: var(--danger); }
+    .profile-empty { font-size: 11px; color: var(--muted); padding: 8px 0; }    label { display: block; font-size: 11px; font-weight: 500; color: var(--muted); margin-bottom: 3px; }
     input, textarea, select {
       width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
       background: var(--surface); color: var(--text); font-size: 12px;
@@ -266,6 +280,22 @@
   <div class="page" id="page-settings">
     <a class="back" id="settingsBack">← 返回列表</a>
     <h1 style="font-size:15px;margin-bottom:8px">⚙️ 设置</h1>
+
+    <div class="form-group">
+      <label>配置方案（点一行即切换为当前使用）</label>
+      <div id="profileList" class="profile-list"></div>
+      <div class="btn-row" style="margin-top:6px">
+        <button class="btn btn-secondary" id="newProfileBtn">＋ 新建方案</button>
+        <button class="btn btn-secondary" id="benchAllBtn">⏱ 全部测延迟</button>
+      </div>
+    </div>
+
+    <div style="border-top:1px solid var(--border);margin:12px 0 10px"></div>
+
+    <div class="form-group">
+      <label>方案名称</label>
+      <input type="text" id="profileName" placeholder="如：方舟 AgentPlan" />
+    </div>
     <div class="form-group">
       <label>API 端点</label>
       <input type="text" id="apiEndpoint" placeholder="https://api.openai.com/v1" />
@@ -291,9 +321,11 @@
     </div>
     <div id="settingsStatus" class="status"></div>
     <div class="btn-row">
-      <button class="btn btn-primary" id="saveBtn">保存设置</button>
+      <button class="btn btn-primary" id="saveBtn">保存方案</button>
       <button class="btn btn-secondary" id="testBtn">测试连接</button>
+      <button class="btn btn-secondary" id="benchBtn">⏱ 测延迟</button>
     </div>
+    <div id="benchResult" style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.7"></div>
   </div>
 
   <script src="popup.js"></script>

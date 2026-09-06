@@ -34,6 +34,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 保存设置
   $('saveBtn').onclick = saveSettings
   $('testBtn').onclick = testConnection
+  $('benchBtn').onclick = benchCurrent
+  $('newProfileBtn').onclick = newProfile
+  $('benchAllBtn').onclick = benchAll
 
   // 模型切换
   $('model').onchange = () => {
@@ -252,36 +255,257 @@ const MODEL_ENDPOINTS = {
   'claude-sonnet-4-6': 'https://api.anthropic.com/v1', 'gemini-2.0-flash': 'https://generativelanguage.googleapis.com/v1beta/openai',
 }
 
+// ─────────────────────────────────────────────
+//  LLM 配置方案（多套并存 + 切换）
+// ─────────────────────────────────────────────
+// 关键设计：切换方案时，把该方案的值同时写回旧的扁平字段
+// （apiEndpoint / apiKey / model）。这样 service worker 的 getConfig 和所有插件
+// 都不需要任何改动 —— 方案只是设置页的一层组织方式，运行时读到的仍是「当前生效值」。
+let profiles = []      // [{ id, name, apiEndpoint, apiKey, model }]
+let activeId = ''
+let editingId = ''     // 表单当前在编辑哪个方案；空串表示在新建
+const latency = {}     // id -> { min, mid, max } 本次会话内的测速结果，不持久化
+
+const newId = () => 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+
+function currentFormConfig() {
+  return {
+    name: $('profileName').value.trim(),
+    apiEndpoint: $('apiEndpoint').value.trim() || 'https://api.openai.com/v1',
+    apiKey: $('apiKey').value.trim(),
+    model: $('model').value === 'custom' ? $('customModel').value.trim() : $('model').value,
+  }
+}
+
+function fillForm(p) {
+  $('profileName').value = p.name || ''
+  $('apiEndpoint').value = p.apiEndpoint || ''
+  $('apiKey').value = p.apiKey || ''
+  const known = Object.keys(MODEL_ENDPOINTS)
+  $('model').value = known.includes(p.model) ? p.model : 'custom'
+  $('customModelGroup').style.display = $('model').value === 'custom' ? 'block' : 'none'
+  if ($('model').value === 'custom') $('customModel').value = p.model || ''
+}
+
+function renderProfiles() {
+  const box = $('profileList')
+  if (!profiles.length) {
+    box.innerHTML = '<div class="profile-empty">还没有保存的方案 —— 在下方填好后点「保存方案」即可创建。</div>'
+    return
+  }
+  box.innerHTML = ''
+  profiles.forEach(p => {
+    const row = document.createElement('div')
+    row.className = 'profile-row' + (p.id === activeId ? ' active' : '')
+    const lat = latency[p.id]
+    row.innerHTML =
+      '<div class="profile-main">' +
+        '<div class="profile-name">' + (p.id === activeId ? '✓ ' : '') + esc(p.name || '(未命名)') + '</div>' +
+        '<div class="profile-meta">' + esc(p.model || '?') + ' · ' + esc((p.apiEndpoint || '').replace(/^https?:\/\//, '')) + '</div>' +
+      '</div>' +
+      (lat ? '<div class="profile-lat">中位 ' + lat.mid + 'ms<br>' + lat.min + '–' + lat.max + 'ms</div>' : '') +
+      '<div class="profile-del" data-del="' + p.id + '" title="删除">✕</div>'
+    row.onclick = ev => {
+      if (ev.target.dataset.del) return
+      activateProfile(p.id)
+    }
+    row.querySelector('[data-del]').onclick = ev => { ev.stopPropagation(); deleteProfile(p.id) }
+    box.appendChild(row)
+  })
+}
+
+// 把某个方案设为当前生效，并同步进扁平字段供 SW / 插件读取
+function activateProfile(id) {
+  const p = profiles.find(x => x.id === id)
+  if (!p) return
+  activeId = id
+  editingId = id
+  fillForm(p)
+  chrome.storage.sync.set({ llmProfiles: profiles, activeProfileId: activeId }, () => {
+    chrome.runtime.sendMessage({
+      type: 'UPDATE_CONFIG',
+      config: { apiEndpoint: p.apiEndpoint, apiKey: p.apiKey, model: p.model }
+    }, () => {
+      renderProfiles()
+      showSettingsStatus('✅ 已切换到「' + (p.name || '未命名') + '」', 'success')
+    })
+  })
+}
+
+function deleteProfile(id) {
+  const p = profiles.find(x => x.id === id)
+  if (!p) return
+  profiles = profiles.filter(x => x.id !== id)
+  if (editingId === id) { editingId = ''; }
+  const wasActive = activeId === id
+  if (wasActive) activeId = profiles.length ? profiles[0].id : ''
+  chrome.storage.sync.set({ llmProfiles: profiles, activeProfileId: activeId }, () => {
+    // 删掉的正好是生效方案 → 把接班的那个同步进扁平字段，避免运行时还指向已删配置
+    if (wasActive && activeId) return activateProfile(activeId)
+    renderProfiles()
+    showSettingsStatus('已删除「' + (p.name || '未命名') + '」', '')
+  })
+}
+
 async function loadSettings() {
   try {
-    const config = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' })
-    $('apiEndpoint').value = config.apiEndpoint || ''
-    $('apiKey').value = config.apiKey || ''
-    const known = Object.keys(MODEL_ENDPOINTS)
-    $('model').value = known.includes(config.model) ? config.model : 'custom'
-    $('customModelGroup').style.display = $('model').value === 'custom' ? 'block' : 'none'
-    if ($('model').value === 'custom') $('customModel').value = config.model
+    const store = await chrome.storage.sync.get(['llmProfiles', 'activeProfileId'])
+    profiles = Array.isArray(store.llmProfiles) ? store.llmProfiles : []
+    activeId = store.activeProfileId || ''
+
+    // 迁移：旧版只有扁平配置，首次进来时把它收成一个默认方案，避免设置「凭空消失」
+    if (!profiles.length) {
+      const cfg = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' })
+      if (cfg && cfg.apiKey) {
+        const p = { id: newId(), name: '默认', apiEndpoint: cfg.apiEndpoint, apiKey: cfg.apiKey, model: cfg.model }
+        profiles = [p]; activeId = p.id
+        await chrome.storage.sync.set({ llmProfiles: profiles, activeProfileId: activeId })
+      }
+    }
+    if (!activeId && profiles.length) activeId = profiles[0].id
+
+    const act = profiles.find(p => p.id === activeId)
+    editingId = act ? act.id : ''
+    fillForm(act || { apiEndpoint: '', apiKey: '', model: 'gpt-4o-mini' })
+    renderProfiles()
   } catch (e) {}
 }
 
 function saveSettings() {
-  const config = {
-    apiEndpoint: $('apiEndpoint').value.trim() || 'https://api.openai.com/v1',
-    apiKey: $('apiKey').value.trim(),
-    model: $('model').value === 'custom' ? $('customModel').value.trim() : $('model').value,
+  const cfg = currentFormConfig()
+  if (!cfg.apiKey) return showSettingsStatus('⚠️ 请填写 API Key', 'error')
+  if (!cfg.name) cfg.name = cfg.model || '未命名'
+
+  const existing = profiles.find(p => p.id === editingId)
+  if (existing) {
+    Object.assign(existing, cfg)
+  } else {
+    const p = Object.assign({ id: newId() }, cfg)
+    profiles.push(p)
+    editingId = p.id
+    if (!activeId) activeId = p.id // 第一个方案自动生效
   }
-  if (!config.apiKey) return showSettingsStatus('⚠️ 请填写 API Key', 'error')
-  chrome.runtime.sendMessage({ type: 'UPDATE_CONFIG', config }, () => {
-    showSettingsStatus('✅ 已保存', 'success')
+  delete latency[editingId] // 配置变了，旧的测速结果不再代表它
+  chrome.storage.sync.set({ llmProfiles: profiles, activeProfileId: activeId }, () => {
+    // 编辑的正是生效方案 → 同步扁平字段，否则运行时还在用旧值
+    if (editingId === activeId) {
+      const p = profiles.find(x => x.id === activeId)
+      chrome.runtime.sendMessage({ type: 'UPDATE_CONFIG', config: { apiEndpoint: p.apiEndpoint, apiKey: p.apiKey, model: p.model } }, () => {
+        renderProfiles(); showSettingsStatus('✅ 已保存并生效', 'success')
+      })
+    } else {
+      renderProfiles(); showSettingsStatus('✅ 已保存（点上方该行可切为生效）', 'success')
+    }
   })
 }
 
-async function testConnection() {
-  const config = {
-    apiEndpoint: $('apiEndpoint').value.trim() || 'https://api.openai.com/v1',
-    apiKey: $('apiKey').value.trim(),
-    model: $('model').value === 'custom' ? $('customModel').value.trim() : $('model').value,
+function newProfile() {
+  editingId = ''
+  fillForm({ apiEndpoint: '', apiKey: '', model: 'gpt-4o-mini' })
+  $('profileName').value = ''
+  $('benchResult').textContent = ''
+  renderProfiles()
+  showSettingsStatus('填好后点「保存方案」创建', '')
+  $('profileName').focus()
+}
+
+// ─── 延迟测量 ───
+// 测的是首字延迟（TTFB）：请求发出到收到第一个内容 token。
+// 参数刻意和 adult-guard 的审核调用保持一致（max_tokens 小、temperature 0、关思考），
+// 这样测出来的数就是屏蔽链路实际会遇到的延迟，而不是一个漂亮但无关的数字。
+async function measureOnce(cfg, signal) {
+  const t0 = performance.now()
+  const res = await fetch(`${cfg.apiEndpoint}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
+    body: JSON.stringify({
+      model: cfg.model, stream: true, max_tokens: 8, temperature: 0,
+      thinking: { type: 'disabled' }, reasoning_effort: 'minimal',
+      messages: [{ role: 'user', content: '只回答 true 或 false：这段话包含色情内容吗？今天天气很好。' }]
+    }),
+    signal
+  })
+  if (!res.ok) throw new Error('HTTP ' + res.status)
+  const reader = res.body.getReader()
+  const dec = new TextDecoder()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const txt = dec.decode(value, { stream: true })
+      // 收到第一个真正的内容增量才算首字（跳过 role 之类的空 delta）
+      for (const line of txt.split('\n')) {
+        const s = line.trim()
+        if (!s.startsWith('data: ') || s === 'data: [DONE]') continue
+        try {
+          const d = JSON.parse(s.slice(6)).choices?.[0]?.delta
+          if (d && d.content) return performance.now() - t0
+        } catch (_) {}
+      }
+    }
+  } finally {
+    try { await reader.cancel() } catch (_) {}
   }
+  return performance.now() - t0 // 没解析到内容增量时退回总耗时
+}
+
+async function measure(cfg, runs) {
+  const vals = []
+  for (let i = 0; i < runs; i++) vals.push(await measureOnce(cfg))
+  vals.sort((a, b) => a - b)
+  const r = n => Math.round(n)
+  return { min: r(vals[0]), mid: r(vals[Math.floor((vals.length - 1) / 2)]), max: r(vals[vals.length - 1]), all: vals.map(r) }
+}
+
+async function benchCurrent() {
+  const cfg = currentFormConfig()
+  if (!cfg.apiKey) return showSettingsStatus('⚠️ 请填写 API Key', 'error')
+  const btn = $('benchBtn')
+  btn.disabled = true; btn.textContent = '测速中...'
+  $('benchResult').textContent = ''
+  try {
+    const RUNS = 5
+    const s = await measure(cfg, RUNS)
+    if (editingId) { latency[editingId] = s; renderProfiles() }
+    $('benchResult').innerHTML =
+      `<b>${esc(cfg.model)}</b> 首字延迟（${RUNS} 次）<br>最快 ${s.min}ms · 中位 <b>${s.mid}ms</b> · 最慢 ${s.max}ms<br>` +
+      `<span style="opacity:.7">全部：${s.all.join(' / ')}ms</span>`
+    showSettingsStatus('✅ 测速完成', 'success')
+  } catch (e) {
+    $('benchResult').textContent = ''
+    showSettingsStatus('❌ 测速失败: ' + e.message, 'error')
+  } finally {
+    btn.disabled = false; btn.textContent = '⏱ 测延迟'
+  }
+}
+
+async function benchAll() {
+  if (!profiles.length) return showSettingsStatus('⚠️ 还没有保存的方案', 'error')
+  const btn = $('benchAllBtn')
+  btn.disabled = true
+  const RUNS = 3
+  for (let i = 0; i < profiles.length; i++) {
+    const p = profiles[i]
+    btn.textContent = `测速 ${i + 1}/${profiles.length}...`
+    if (!p.apiKey) continue
+    try {
+      latency[p.id] = await measure(p, RUNS)
+    } catch (e) {
+      latency[p.id] = { min: 0, mid: 0, max: 0, all: [], err: e.message }
+    }
+    renderProfiles()
+  }
+  btn.disabled = false; btn.textContent = '⏱ 全部测延迟'
+  const ok = profiles.filter(p => latency[p.id] && latency[p.id].mid).sort((a, b) => latency[a.id].mid - latency[b.id].mid)
+  $('benchResult').innerHTML = ok.length
+    ? '按中位首字延迟排序（每个 ' + RUNS + ' 次）：<br>' + ok.map((p, i) =>
+        `${i + 1}. <b>${esc(p.name || '未命名')}</b> ${latency[p.id].mid}ms（${latency[p.id].min}–${latency[p.id].max}ms）· ${esc(p.model)}`).join('<br>')
+    : '没有可用的测速结果'
+  showSettingsStatus('✅ 全部测速完成', 'success')
+}
+
+async function testConnection() {
+  const config = currentFormConfig()
   if (!config.apiKey) return showSettingsStatus('⚠️ 请填写 API Key', 'error')
   $('testBtn').disabled = true; $('testBtn').textContent = '测试中...'
   try {
