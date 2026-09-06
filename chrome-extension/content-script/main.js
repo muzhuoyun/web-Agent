@@ -15,7 +15,9 @@
     return String(s).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '�')
   }
 
-  function createLLMStream(messages) {
+  // options（可选）：按任务覆盖采样参数，如 { max_tokens: 8, temperature: 0 }
+  // 分类/审核这类只需要几个字且要稳定的任务，和「猜你想问」需要的参数完全不同
+  function createLLMStream(messages, options) {
     let port = null
     const queue = []
     let done = false, error = null
@@ -41,7 +43,7 @@
         }
       })
       port.onDisconnect.addListener(() => { done = true; port = null; if (pending) { const p = pending; pending = null; p.res({ value: undefined, done: true }) } })
-      port.postMessage({ type: 'LLM_STREAM', messages: messages.map(m => ({ ...m, content: sanitizeContent(m.content) })) })
+      port.postMessage({ type: 'LLM_STREAM', messages: messages.map(m => ({ ...m, content: sanitizeContent(m.content) })), options: options || null })
     }
     init()
     return {

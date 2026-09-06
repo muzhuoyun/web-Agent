@@ -112,7 +112,7 @@ chrome.runtime.onConnect.addListener((port) => {
           port.postMessage({ type: 'ERROR', message: '请先在插件设置中填写 API Key' })
           return
         }
-        await streamLLM(msg.messages, config, port, abortController.signal)
+        await streamLLM(msg.messages, config, port, abortController.signal, msg.options)
       } catch (e) {
         if (e.name === 'AbortError') return
         port.postMessage({ type: 'ERROR', message: e.message || '请求失败' })
@@ -223,10 +223,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // 万一某个端点不认这些字段直接报 400，下面会去掉它们重试一次，保证不至于整体不可用。
 const NO_THINKING = { thinking: { type: 'disabled' }, reasoning_effort: 'minimal' }
 
-async function streamLLM(messages, config, port, signal) {
+async function streamLLM(messages, config, port, signal, options) {
   const { apiEndpoint, apiKey, model } = config
   const t0 = Date.now()
-  const base = { model, messages, stream: true, temperature: 0.7, max_tokens: 1000 }
+  // 采样参数默认值偏向「生成类」任务；审核/分类可由调用方用 options 覆盖
+  // （max_tokens 开太大在部分推理网关上会参与批调度、拖慢排队；temperature 不为 0
+  //   会让同一段文字的判定结果在多次调用间摇摆）
+  const base = { model, messages, stream: true, temperature: 0.7, max_tokens: 1000, ...(options || {}) }
 
   const send = body => fetch(`${apiEndpoint}/chat/completions`, {
     method: 'POST',

@@ -324,50 +324,87 @@ async function initPlugin(ctx) {
     // 串行化：上一轮 LLM 未返回时不并发调用，标记待补检，返回后自动重检
     if (llmRunning) { console.log('[adult-guard] 上一轮 LLM 未返回，标记待补检'); llmDirty = true; return }
     llmRunning = true
-    const tLlm = performance.now()
-    try {
-      const msg = [
-        { role: 'system', content: config.systemPrompt || '你是一个内容审核助手，判断以下文字是否包含色情内容，只回答 true 或 false。' },
-        { role: 'user', content: text.slice(0, 3000) }
-      ]
-      let result = ''
-      let tFirst = 0
-      for await (const chunk of api.createLLMStream(msg)) {
-        if (!tFirst) tFirst = performance.now() // 首字延迟：思考没关时这里会被显著拉长
-        result += chunk
+
+    // 审核是分类任务：只要几个字、且要求多次调用结果稳定
+    const JUDGE_OPTS = { max_tokens: 8, temperature: 0 }
+    const SYS = config.systemPrompt || '你是一个内容审核助手，判断以下文字是否包含色情内容，只回答 true 或 false。'
+    async function judge(userContent, tag) {
+      const t = performance.now()
+      let out = '', tFirst = 0
+      for await (const chunk of api.createLLMStream(
+        [{ role: 'system', content: SYS }, { role: 'user', content: userContent }], JUDGE_OPTS)) {
+        if (!tFirst) tFirst = performance.now()
+        out += chunk
       }
-      T.llmFirst = tFirst ? tFirst - tLlm : 0
-      T.llmTotal = performance.now() - tLlm
-      console.log('[adult-guard] LLM:', JSON.stringify(result),
-        `| 首字 ${T.llmFirst ? ms(T.llmFirst) : '—'} 全部 ${ms(T.llmTotal)}`)
-      llmFailStreak = 0 // 连接正常，重置失败计数
-      // 空响应不能当成「非成人」放行：思考吃满 max_tokens 时正文就是空的，
-      // 静默放行等于漏判。保持不屏蔽但也不记负反馈，等内容变化后重试。
-      if (!result.trim()) {
-        console.log('[adult-guard] ⚠️ LLM 返回空正文，本轮不判定（不屏蔽也不记负反馈），等下次内容变化重试')
-        lastSig = -1 // 清掉指纹，让同样的内容还能再检一次
+      const stat = { first: tFirst ? tFirst - t : 0, total: performance.now() - t }
+      console.log(`[adult-guard][${tag}] LLM: ${JSON.stringify(out)} | 输入 ${userContent.length} 字 | 首字 ${tFirst ? ms(stat.first) : '—'} 全部 ${ms(stat.total)}`)
+      return { out: out, stat: stat }
+    }
+
+    try {
+      // ── 第一段：句子级窗口，快 ──
+      // 只看命中词所在的句子，缺宏观语境，所以天然偏向屏蔽 —— 它的结论只用来「先罩住」，
+      // 不直接删页面，误判的代价由第二段负责纠正。
+      const window1 = sentencesAround(text, hits)
+      const r1 = await judge(window1 || text.slice(0, STAGE1_MAX), '第一段·窗口')
+      T.s1First = r1.stat.first; T.s1Total = r1.stat.total
+      if (!r1.out.trim()) {
+        console.log('[adult-guard] ⚠️ 第一段返回空正文，本轮不判定，等下次内容变化重试')
+        lastSig = -1
         return
       }
-      if (result.toLowerCase().includes('true')) {
-        resetFalseCounts(hits) // 命中有效，清零负反馈计数
+      if (!r1.out.toLowerCase().includes('true')) {
+        penalizeHits(hits) // 连窗口内都判否，说明这些词在本页确实无关
+        console.log(`[adult-guard] ⏱ 第一段判否，未屏蔽 | 提取 ${ms(T.extract)} 扫描 ${ms(T.keyword)} 第一段 ${ms(T.s1Total)} | 合计 ${ms(performance.now() - T.start)}`)
+        return
+      }
+
+      // 第一段成立 → 立刻遮挡，用户不用等第二段
+      showMask()
+
+      // ── 第二段：全文复核，准 ──
+      // 不做片段截取，让 LLM 拿到宏观语境（如「防范色情信息」的科普文，窗口里全是敏感词
+      // 但整体无害）。CTX_MAX 只是防止超长页面撑爆上下文/费用的安全上限，不是语义截取。
+      const CTX_MAX = 20000
+      if (text.length > CTX_MAX) console.log(`[adult-guard][第二段] 页面 ${text.length} 字，超过 ${CTX_MAX} 字安全上限，按上限送入`)
+      const r2 = await judge(text.slice(0, CTX_MAX), '第二段·全文')
+      T.s2First = r2.stat.first; T.s2Total = r2.stat.total
+      llmFailStreak = 0 // 两段都通了，连接正常
+
+      if (!r2.out.trim()) {
+        // 复核拿不到结论：保留遮罩（第一段毕竟判成立），等内容变化后重试，不删页面
+        console.log('[adult-guard] ⚠️ 第二段返回空正文，保留遮罩不删页面，等下次内容变化重试')
+        lastSig = -1
+        return
+      }
+      if (r2.out.toLowerCase().includes('true')) {
+        resetFalseCounts(hits)
+        hideMask('复核成立，转为正式屏蔽')
         const tRender = performance.now()
-        blockPage(text, true, hits) // confirmed：LLM 确认为成人内容
+        blockPage(text, true, hits)
         console.log('[adult-guard] ⏱ 屏蔽链路耗时：' +
-          `提取 ${ms(T.extract)} → 扫描 ${ms(T.keyword)} → LLM 首字 ${ms(T.llmFirst)} / 全部 ${ms(T.llmTotal)} → 渲染 ${ms(performance.now() - tRender)}` +
-          ` | 合计 ${ms(performance.now() - T.start)}`)
+          `提取 ${ms(T.extract)} → 扫描 ${ms(T.keyword)} → 第一段 首字 ${ms(T.s1First)}/全部 ${ms(T.s1Total)} → 第二段 首字 ${ms(T.s2First)}/全部 ${ms(T.s2Total)} → 渲染 ${ms(performance.now() - tRender)}` +
+          ` | 合计 ${ms(performance.now() - T.start)} | 遮罩出现于 ${ms(T.extract + T.keyword + T.s1Total)}`)
       } else {
-        penalizeHits(hits) // LLM 判定非成人：为所有命中的关键词记负反馈
+        // 窗口内像、全文看不像 → 典型的语境误判，撤罩放行并给关键词记负反馈
+        penalizeHits(hits)
+        hideMask('全文复核判否，判定为语境误判')
+        console.log(`[adult-guard] ⏱ 第一段成立但全文判否 | 第一段 ${ms(T.s1Total)} 第二段 ${ms(T.s2Total)} | 合计 ${ms(performance.now() - T.start)}`)
       }
     } catch (e) {
-      console.log('[adult-guard] LLM 失败:', e.message, `| 耗时 ${ms(performance.now() - tLlm)}`)
+      console.log('[adult-guard] LLM 失败:', e.message, `| 耗时 ${ms(performance.now() - T.start)}`)
       llmFailStreak++
       if (llmFailStreak >= 3) {
         // 连续 3 次连接失败（如扩展被 reload 后旧标签页失联），停止检测避免误屏蔽，刷新页面恢复
         llmDown = true
+        hideMask('已停止检测，不再保留遮挡') // 不再复核了，留着遮罩会永久挡住页面
         console.log('[adult-guard] 连续 3 次连接失败，扩展可能已重载，已停止检测（刷新页面恢复）')
         return
       }
-      if (hits.length) blockPage(text, false, hits) // 兜底屏蔽（关键词命中但无法复核），不确认内容性质
+      // 关键词命中但无法复核：保留/挂上遮罩即可，不做破坏性屏蔽，等重试
+      showMask()
+      console.log('[adult-guard] 复核失败，暂以遮罩挡住，等下次内容变化重试')
+      lastSig = -1
     } finally {
       llmRunning = false
       if (llmDirty && !blocked) { llmDirty = false; console.log('[adult-guard] 补检上一轮期间的内容变化'); runDetection() }
@@ -413,6 +450,68 @@ async function initPlugin(ctx) {
 
   const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   // 屏蔽页配色主题：danger=成人内容（警示红/深蓝紫），focus=专注模式（提醒琥珀/暖棕），视觉上明显区分
+  // ── 两段式屏蔽的第一段：句子级窗口 ──
+  // 只把命中词所在的整句挑出来给 LLM，提示词短、prefill 快，而且一定含证据
+  // （原来切前 3000 字，命中词若在更后面就送不进去，等于让 LLM 盲判）
+  const SENT_SPLIT = /(?<=[。！？；!?;\n])/
+  const STAGE1_MAX = 1200 // 窗口总长上限，超出就不再往里塞句子
+  function sentencesAround(text, hits) {
+    const lowerHits = hits.map(h => h.toLowerCase())
+    const parts = text.split(SENT_SPLIT)
+    const picked = []
+    let total = 0
+    for (const raw of parts) {
+      const s = raw.trim()
+      if (s.length < 2) continue
+      const low = s.toLowerCase()
+      if (!lowerHits.some(h => low.includes(h))) continue
+      // 单句过长时截断，避免一句话就吃满预算
+      const seg = s.length > 300 ? s.slice(0, 300) + '…' : s
+      if (total + seg.length > STAGE1_MAX) break
+      picked.push(seg)
+      total += seg.length
+    }
+    // 一句都没挑到（命中词跨句或落在无句读的长文本里）→ 退回命中词附近的字符窗口
+    if (!picked.length) {
+      const low = text.toLowerCase()
+      for (const h of lowerHits) {
+        const i = low.indexOf(h)
+        if (i === -1) continue
+        const seg = text.slice(Math.max(0, i - 120), i + h.length + 120)
+        if (total + seg.length > STAGE1_MAX) break
+        picked.push(seg)
+        total += seg.length
+      }
+    }
+    return picked.join('\n---\n')
+  }
+
+  // ── 临时遮罩 ──
+  // 第一段判定成立后先把页面罩住（不破坏 DOM，可撤销），等第二段全文复核出结论：
+  // 成立 → 走 blockPage 真正清掉内容；不成立 → 撤掉遮罩，页面照常。
+  let maskEl = null, maskedMedia = []
+  function showMask() {
+    if (maskEl) return
+    maskEl = document.createElement('div')
+    maskEl.id = 'ai-ag-mask'
+    maskEl.style.cssText = 'all:initial;position:fixed!important;inset:0!important;z-index:2147483647!important;display:flex!important;align-items:center;justify-content:center;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)!important;color:#fff!important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif!important;text-align:center'
+    maskEl.innerHTML = '<div style="padding:40px;max-width:460px"><div style="font-size:56px;margin-bottom:14px">🛡️</div><div style="font-size:19px;font-weight:600;color:#f87171;margin-bottom:10px">检测到可疑内容，正在复核…</div><div style="font-size:13px;color:rgba(255,255,255,.65);line-height:1.7">已先行遮挡该页面。AI 正在结合全文判断，若为误判会自动恢复显示。</div></div>'
+    document.documentElement.appendChild(maskEl)
+    // 遮罩挡不住声音，顺手暂停正在播放的音视频（不自动恢复，避免撤罩时突然出声）
+    maskedMedia = []
+    try {
+      document.querySelectorAll('video,audio').forEach(function(m) {
+        if (!m.paused) { m.pause(); maskedMedia.push(m) }
+      })
+    } catch (e) {}
+    console.log('[adult-guard] 已挂临时遮罩，等待全文复核' + (maskedMedia.length ? `（暂停了 ${maskedMedia.length} 个媒体元素）` : ''))
+  }
+  function hideMask(why) {
+    if (!maskEl) return
+    maskEl.remove(); maskEl = null
+    console.log('[adult-guard] 已撤除临时遮罩：' + why)
+  }
+
   const PAGE_THEMES = {
     danger: { bg: 'linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)', accent: '#f87171', badgeBg: 'rgba(248,113,113,.15)', badgeBorder: 'rgba(248,113,113,.2)' },
     focus:  { bg: 'linear-gradient(135deg,#1c1917,#2a2622,#3d3120)', accent: '#fbbf24', badgeBg: 'rgba(251,191,36,.15)', badgeBorder: 'rgba(251,191,36,.25)' }
@@ -481,7 +580,8 @@ async function initPlugin(ctx) {
       ]
       let result = ''
       let tFirst = 0
-      for await (const chunk of api.createLLMStream(msg)) {
+      // 同为 true/false 分类任务，用与成人审核一致的采样参数
+      for await (const chunk of api.createLLMStream(msg, { max_tokens: 8, temperature: 0 })) {
         if (!tFirst) tFirst = performance.now()
         result += chunk
       }
